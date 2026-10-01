@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -24,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -294,6 +296,7 @@ fun MovieCard(
     val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
+    var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
 
     Card(
         modifier = modifier
@@ -307,10 +310,10 @@ fun MovieCard(
                     .fillMaxWidth()
                     .height(150.dp)
                     .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                    .background(Color(0xFF232A38)),
+                    .background(Color(0xFF080F19)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrEmpty()) {
+                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -319,14 +322,18 @@ fun MovieCard(
                         contentDescription = item.title,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = if (item.type == com.example.parser.ItemType.LIVE) ContentScale.Fit else ContentScale.Crop,
-                        error = rememberAsyncImagePainter(model = android.R.drawable.ic_menu_gallery)
+                        placeholder = painterResource(id = R.drawable.img_app_icon),
+                        error = painterResource(id = R.drawable.img_app_icon),
+                        onError = { logoLoadFailed = true }
                     )
                 } else {
-                    Icon(
-                        if (item.type == com.example.parser.ItemType.LIVE) Icons.Default.LiveTv else Icons.Default.VideoLibrary,
-                        contentDescription = null,
-                        modifier = Modifier.size(36.dp),
-                        tint = Color.Gray.copy(alpha = 0.5f)
+                    Image(
+                        painter = painterResource(id = R.drawable.img_app_icon),
+                        contentDescription = item.title,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                        contentScale = ContentScale.Fit
                     )
                 }
 
@@ -466,6 +473,7 @@ fun ChannelCard(
     val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
+    var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -484,10 +492,12 @@ fun ChannelCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(60.dp)
-                    .padding(horizontal = 6.dp),
+                    .padding(horizontal = 6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF080F19)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrEmpty()) {
+                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -498,14 +508,18 @@ fun ChannelCard(
                             .fillMaxSize()
                             .clip(RoundedCornerShape(6.dp)),
                         contentScale = ContentScale.Fit,
-                        error = rememberAsyncImagePainter(model = android.R.drawable.ic_menu_gallery)
+                        placeholder = painterResource(id = R.drawable.img_app_icon),
+                        error = painterResource(id = R.drawable.img_app_icon),
+                        onError = { logoLoadFailed = true }
                     )
                 } else {
-                    Icon(
-                        Icons.Default.LiveTv,
-                        contentDescription = null,
-                        modifier = Modifier.size(42.dp),
-                        tint = Color.Gray
+                    Image(
+                        painter = painterResource(id = R.drawable.img_app_icon),
+                        contentDescription = item.title,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Fit
                     )
                 }
             }
@@ -630,6 +644,7 @@ fun SeriesCard(
     val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
+    var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -644,8 +659,10 @@ fun SeriesCard(
                     .fillMaxWidth()
                     .height(150.dp)
                     .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+                    .background(Color(0xFF080F19)),
+                contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrEmpty()) {
+                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -654,22 +671,19 @@ fun SeriesCard(
                         contentDescription = seriesName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
-                        error = rememberAsyncImagePainter(model = android.R.drawable.ic_menu_gallery)
+                        placeholder = painterResource(id = R.drawable.img_app_icon),
+                        error = painterResource(id = R.drawable.img_app_icon),
+                        onError = { logoLoadFailed = true }
                     )
                 } else {
-                    Box(
+                    Image(
+                        painter = painterResource(id = R.drawable.img_app_icon),
+                        contentDescription = seriesName,
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF232A38)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Tv,
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp),
-                            tint = Color.Gray.copy(alpha = 0.5f)
-                        )
-                    }
+                            .padding(8.dp),
+                        contentScale = ContentScale.Fit
+                    )
                 }
 
                 Surface(
@@ -800,16 +814,17 @@ fun SeriesCard(
 @Composable
 fun ProgressCard(progress: com.example.model.db.PlaybackProgressEntity, onClick: () -> Unit) {
     val context = LocalContext.current
+    var logoLoadFailed by remember(progress.logo) { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .width(160.dp)
             .height(90.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF080F19))
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (!progress.logo.isNullOrEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (!progress.logo.isNullOrBlank() && !logoLoadFailed) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(progress.logo)
@@ -818,20 +833,19 @@ fun ProgressCard(progress: com.example.model.db.PlaybackProgressEntity, onClick:
                     contentDescription = progress.title,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
-                    error = rememberAsyncImagePainter(model = android.R.drawable.ic_menu_gallery)
+                    placeholder = painterResource(id = R.drawable.img_app_icon),
+                    error = painterResource(id = R.drawable.img_app_icon),
+                    onError = { logoLoadFailed = true }
                 )
             } else {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.VideoLibrary,
-                        contentDescription = null,
-                        modifier = Modifier.size(40.dp),
-                        tint = Color.Gray.copy(alpha = 0.5f)
-                    )
-                }
+                Image(
+                    painter = painterResource(id = R.drawable.img_app_icon),
+                    contentDescription = progress.title,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 22.dp, top = 4.dp),
+                    contentScale = ContentScale.Fit
+                )
             }
             Box(
                 modifier = Modifier
@@ -1502,8 +1516,18 @@ fun ContentInfoDialog(
             var foundEp: M3uItem? = null
 
             if (!mediaUrl.isNullOrBlank()) {
+                val cached = com.example.model.PlayerRepository.lastPositions[mediaUrl]
                 val direct = dao.getProgressForUrl(mediaUrl)
-                if (direct != null && direct.positionMs > 0L && direct.durationMs > 0L) {
+                if (cached != null && cached.first > 1000L) {
+                    foundProgress = com.example.model.db.PlaybackProgressEntity(
+                        url = mediaUrl,
+                        title = title,
+                        logo = posterUrl,
+                        type = if (isSeries) "SERIES" else "MOVIE",
+                        positionMs = cached.first,
+                        durationMs = cached.second.coerceAtLeast(cached.first + 60_000L)
+                    )
+                } else if (direct != null && direct.positionMs > 0L && direct.durationMs > 0L) {
                     foundProgress = direct
                 }
             }
@@ -1512,8 +1536,24 @@ fun ContentInfoDialog(
                 var latestTimestamp = -1L
                 for (ep in seriesEpisodes) {
                     if (ep.url.isNotBlank()) {
+                        val cached = com.example.model.PlayerRepository.lastPositions[ep.url]
                         val p = dao.getProgressForUrl(ep.url)
-                        if (p != null && p.positionMs > 0L && p.durationMs > 0L && p.timestamp > latestTimestamp) {
+                        if (cached != null && cached.first > 1000L) {
+                            val ts = p?.timestamp ?: System.currentTimeMillis()
+                            if (ts >= latestTimestamp) {
+                                latestTimestamp = ts
+                                foundProgress = com.example.model.db.PlaybackProgressEntity(
+                                    url = ep.url,
+                                    title = ep.title,
+                                    logo = ep.logo ?: posterUrl,
+                                    type = "SERIES",
+                                    positionMs = cached.first,
+                                    durationMs = cached.second.coerceAtLeast(cached.first + 60_000L),
+                                    timestamp = ts
+                                )
+                                foundEp = ep
+                            }
+                        } else if (p != null && p.positionMs > 0L && p.durationMs > 0L && p.timestamp > latestTimestamp) {
                             latestTimestamp = p.timestamp
                             foundProgress = p
                             foundEp = ep
@@ -1766,7 +1806,7 @@ fun ContentInfoDialog(
                             modifier = Modifier.clickable { isOverviewExpanded = !isOverviewExpanded }
                         )
 
-                        // Continue Watching pill button + thin progress bar + % (ONLY if saved resume progress exists)
+                        // Continue Watching + Start from Beginning buttons + thin progress bar + % (ONLY if saved resume progress exists)
                         val prog = resumeProgress
                         if (prog != null && prog.positionMs > 0L && prog.durationMs > 0L) {
                             val progressRatio = (prog.positionMs.toFloat() / prog.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -1777,10 +1817,12 @@ fun ContentInfoDialog(
                             if (isLandscape) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    OutlinedButton(
+                                    // 1. Kaldığı Yerden Devam Et
+                                    Button(
                                         onClick = {
+                                            com.example.model.PlayerRepository.preselectedResumeChoice = com.example.model.ResumeChoice.RESUME
                                             if (onPlay != null) {
                                                 onPlay(matchedResumeEpisode)
                                             } else {
@@ -1788,13 +1830,12 @@ fun ContentInfoDialog(
                                             }
                                         },
                                         shape = RoundedCornerShape(50),
-                                        border = BorderStroke(1.5.dp, Color(0xFFE50914)),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            containerColor = Color.Black.copy(alpha = 0.65f),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFFE50914),
                                             contentColor = Color.White
                                         ),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                                        modifier = Modifier.height(32.dp)
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(34.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.PlayArrow,
@@ -1804,10 +1845,44 @@ fun ContentInfoDialog(
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = stringResource(R.string.continue_watching),
+                                            text = stringResource(R.string.resume_from_last_position),
                                             color = Color.White,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    // 2. Baştan Başla
+                                    OutlinedButton(
+                                        onClick = {
+                                            com.example.model.PlayerRepository.preselectedResumeChoice = com.example.model.ResumeChoice.RESTART
+                                            if (onPlay != null) {
+                                                onPlay(matchedResumeEpisode)
+                                            } else {
+                                                onDismiss()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(50),
+                                        border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.4f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = Color.Black.copy(alpha = 0.65f),
+                                            contentColor = Color.White
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(34.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Replay,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = stringResource(R.string.start_from_beginning),
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold
                                         )
                                     }
 
@@ -1815,7 +1890,7 @@ fun ContentInfoDialog(
                                         LinearProgressIndicator(
                                             progress = { progressRatio },
                                             modifier = Modifier
-                                                .width(140.dp)
+                                                .width(110.dp)
                                                 .height(4.dp)
                                                 .clip(RoundedCornerShape(2.dp)),
                                             color = Color(0xFFE50914),
@@ -1834,36 +1909,76 @@ fun ContentInfoDialog(
                                 Column(
                                     horizontalAlignment = Alignment.Start
                                 ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            if (onPlay != null) {
-                                                onPlay(matchedResumeEpisode)
-                                            } else {
-                                                onDismiss()
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(50),
-                                        border = BorderStroke(1.5.dp, Color(0xFFE50914)),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            containerColor = Color.Black.copy(alpha = 0.65f),
-                                            contentColor = Color.White
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                                        modifier = Modifier.height(40.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = stringResource(R.string.continue_watching),
-                                            color = Color.White,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        // 1. Kaldığı Yerden Devam Et
+                                        Button(
+                                            onClick = {
+                                                com.example.model.PlayerRepository.preselectedResumeChoice = com.example.model.ResumeChoice.RESUME
+                                                if (onPlay != null) {
+                                                    onPlay(matchedResumeEpisode)
+                                                } else {
+                                                    onDismiss()
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(50),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFFE50914),
+                                                contentColor = Color.White
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                            modifier = Modifier.height(40.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = stringResource(R.string.resume_from_last_position),
+                                                color = Color.White,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // 2. Baştan Başla
+                                        OutlinedButton(
+                                            onClick = {
+                                                com.example.model.PlayerRepository.preselectedResumeChoice = com.example.model.ResumeChoice.RESTART
+                                                if (onPlay != null) {
+                                                    onPlay(matchedResumeEpisode)
+                                                } else {
+                                                    onDismiss()
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(50),
+                                            border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.4f)),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = Color.Black.copy(alpha = 0.65f),
+                                                contentColor = Color.White
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                            modifier = Modifier.height(40.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Replay,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = stringResource(R.string.start_from_beginning),
+                                                color = Color.White,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
                                     }
 
                                     Spacer(modifier = Modifier.height(6.dp))

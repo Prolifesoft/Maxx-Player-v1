@@ -8,6 +8,10 @@
     <string name="search_placeholder">Ara...</string>
     <string name="filter_all">TÜMÜ</string>
     <string name="continue_watching">İzlemeye Devam Et</string>
+    <string name="resume_from_last_position">Kaldığı Yerden Devam Et</string>
+    <string name="start_from_beginning">Baştan Başla</string>
+    <string name="resume_playback_prompt_title">İzlemeye Devam Et</string>
+    <string name="resume_playback_prompt_subtitle">Kaldığınız süre: %1$s</string>
     <string name="play">Oynat</string>
     <string name="settings_data">VERİ</string>
     <string name="settings_share">PAYLAŞ</string>

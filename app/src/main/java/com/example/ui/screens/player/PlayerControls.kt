@@ -176,31 +176,30 @@ fun PlayerBottomBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Logo
-                    if (!item?.logo.isNullOrBlank()) {
+                    var logoLoadFailed by remember(item?.logo) { mutableStateOf(false) }
+                    if (!item?.logo.isNullOrBlank() && !logoLoadFailed) {
                         AsyncImage(
                             model = item?.logo,
-                            contentDescription = null,
+                            contentDescription = item?.title,
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF1E1E28)),
-                            contentScale = ContentScale.Fit
+                                .background(Color(0xFF080F19)),
+                            contentScale = ContentScale.Fit,
+                            placeholder = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
+                            error = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
+                            onError = { logoLoadFailed = true }
                         )
                     } else {
-                        Box(
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
+                            contentDescription = item?.title,
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = (item?.title?.firstOrNull() ?: 'P').uppercase(),
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
-                            )
-                        }
+                                .background(Color(0xFF080F19)),
+                            contentScale = ContentScale.Fit
+                        )
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))

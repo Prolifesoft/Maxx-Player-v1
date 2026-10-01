@@ -70,6 +70,9 @@ interface IptvDao {
     @Query("SELECT * FROM playback_progress WHERE url = :url")
     suspend fun getProgressForUrl(url: String): PlaybackProgressEntity?
 
+    @Query("DELETE FROM playback_progress WHERE url = :url")
+    suspend fun deleteProgressForUrl(url: String)
+
     @Query("DELETE FROM playback_progress")
     suspend fun clearRecentProgress()
 

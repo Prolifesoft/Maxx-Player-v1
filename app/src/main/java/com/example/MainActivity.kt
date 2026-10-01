@@ -94,6 +94,23 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             var lastRootBackPressTime by remember { mutableLongStateOf(0L) }
 
+            LaunchedEffect(currentUserId) {
+                if (currentUserId.isNotBlank()) {
+                    val db = AppDatabase.getDatabase(this@MainActivity)
+                    val user = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        db.iptvDao().getUser(currentUserId)
+                    }
+                    if (user != null) {
+                        com.example.model.OdooIntegrationManager.registerCustomerAndTrial(
+                            context = this@MainActivity,
+                            userId = user.id,
+                            userName = user.name ?: "Kullanıcı",
+                            userEmail = user.email ?: ""
+                        )
+                    }
+                }
+            }
+
             val handleRootExit: () -> Unit = {
                 val now = System.currentTimeMillis()
                 if (now - lastRootBackPressTime < 2500) {

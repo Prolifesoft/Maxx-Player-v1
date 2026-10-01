@@ -31,8 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -59,7 +62,10 @@ fun DashboardScreen(
     onNavigateToPlaylists: () -> Unit = {},
     onNavigateToDeviceInfo: () -> Unit = {}
 ) {
-    var selectedTabIndex by remember { mutableStateOf(0) }
+    var selectedTabIndex by remember { mutableStateOf(com.example.model.PlayerRepository.lastDashboardTabIndex) }
+    LaunchedEffect(selectedTabIndex) {
+        com.example.model.PlayerRepository.lastDashboardTabIndex = selectedTabIndex
+    }
     val playWithPlaylist: (M3uItem, List<M3uItem>) -> Unit = { item, playlist ->
         com.example.model.PlayerRepository.currentPlaylist = playlist
         com.example.model.PlayerRepository.isFavoritesPlaylist = (selectedTabIndex == 4 && item.type != ItemType.SERIES)
@@ -102,13 +108,22 @@ fun DashboardScreen(
         Icons.Default.Favorite
     )
 
-    var isSearchExpanded by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
+    var isSearchExpanded by remember { mutableStateOf(com.example.model.PlayerRepository.lastDashboardSearchQuery.isNotEmpty()) }
+    var searchQuery by remember { mutableStateOf(com.example.model.PlayerRepository.lastDashboardSearchQuery) }
+    LaunchedEffect(searchQuery) {
+        com.example.model.PlayerRepository.lastDashboardSearchQuery = searchQuery
+    }
     var showMenu by remember { mutableStateOf(false) }
     var showCategoryDrawer by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
+        if (PlaylistRepository.playlist.value.isEmpty() && !PlaylistRepository.isLoading.value) {
+            val targetUrl = PlaylistRepository.resolveLastOrFirstPlaylistUrl(context)
+            if (!targetUrl.isNullOrBlank()) {
+                PlaylistRepository.loadPlaylist(context, targetUrl)
+            }
+        }
         scope.launch {
             try {
                 com.example.model.SupportRepository.syncTicketsFromOdoo()
@@ -140,7 +155,10 @@ fun DashboardScreen(
     }
 
     // Navigation and Sheets state
-    var selectedSeries by remember { mutableStateOf<List<M3uItem>?>(null) }
+    var selectedSeries by remember { mutableStateOf<List<M3uItem>?>(com.example.model.PlayerRepository.lastSelectedSeries) }
+    LaunchedEffect(selectedSeries) {
+        com.example.model.PlayerRepository.lastSelectedSeries = selectedSeries
+    }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
     var showSupportSheet by remember { mutableStateOf(false) }
@@ -328,8 +346,23 @@ fun DashboardScreen(
             else -> emptyList()
         }
     }
-    var selectedGroup by remember(selectedTabIndex) { mutableStateOf<String?>(null) }
-    var selectedFavoriteFilter by remember(selectedTabIndex) { mutableStateOf(0) } // 0: Tümü, 1: Filmler, 2: Diziler, 3: Canlı TV'ler
+    var selectedGroup by remember(selectedTabIndex) {
+        mutableStateOf(com.example.model.PlayerRepository.lastDashboardGroupByTab[selectedTabIndex])
+    }
+    LaunchedEffect(selectedTabIndex, selectedGroup) {
+        val grp = selectedGroup
+        if (grp != null) {
+            com.example.model.PlayerRepository.lastDashboardGroupByTab[selectedTabIndex] = grp
+        } else {
+            com.example.model.PlayerRepository.lastDashboardGroupByTab.remove(selectedTabIndex)
+        }
+    }
+    var selectedFavoriteFilter by remember(selectedTabIndex) {
+        mutableStateOf(com.example.model.PlayerRepository.lastDashboardFavoriteFilter)
+    }
+    LaunchedEffect(selectedFavoriteFilter) {
+        com.example.model.PlayerRepository.lastDashboardFavoriteFilter = selectedFavoriteFilter
+    }
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
 
     BackHandler(enabled = true) {
@@ -551,20 +584,40 @@ fun DashboardScreen(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { selectedTabIndex = 0 }
+                        modifier = Modifier
+                            .clickable { selectedTabIndex = 0 }
+                            .padding(vertical = 4.dp)
                     ) {
-                        Icon(
-                            Icons.Default.VideoLibrary,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            stringResource(R.string.app_name),
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 17.sp
+                            text = androidx.compose.ui.text.buildAnnotatedString {
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color(0xFFF43F28),
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("MAXX ")
+                                }
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color.White,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("PLAYER ")
+                                }
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color(0xFFF43F28),
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("+")
+                                }
+                            },
+                            fontSize = 17.sp,
+                            letterSpacing = 1.8.sp,
+                            maxLines = 1
                         )
                     }
 
@@ -651,18 +704,36 @@ fun DashboardScreen(
                             .padding(end = 12.dp)
                             .clickable { selectedTabIndex = 0 }
                     ) {
-                        Icon(
-                            Icons.Default.VideoLibrary,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            stringResource(R.string.app_name),
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 14.sp
+                            text = androidx.compose.ui.text.buildAnnotatedString {
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color(0xFFF43F28),
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("MAXX ")
+                                }
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color.White,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("PLAYER ")
+                                }
+                                withStyle(
+                                    androidx.compose.ui.text.SpanStyle(
+                                        color = Color(0xFFF43F28),
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append("+")
+                                }
+                            },
+                            fontSize = 15.sp,
+                            letterSpacing = 1.6.sp,
+                            maxLines = 1
                         )
                     }
 
@@ -2155,15 +2226,20 @@ fun DashboardScreen(
             SeriesDetailSheet(
                 items = currentSeries,
                 onPlayStream = { item ->
-                    selectedSeries = null
                     if (com.example.model.ParentalControlManager.isItemLocked(item)) {
+                        selectedSeries = null
                         playlistForUnlock = currentSeries
                         itemToUnlock = item
                     } else {
+                        // Keep selectedSeries in PlayerRepository so returning from PlayerScreen restores the series sheet
+                        com.example.model.PlayerRepository.lastSelectedSeries = currentSeries
                         playWithPlaylist(item, currentSeries)
                     }
                 },
-                onClose = { selectedSeries = null }
+                onClose = {
+                    selectedSeries = null
+                    com.example.model.PlayerRepository.lastSelectedSeries = null
+                }
             )
         }
     }

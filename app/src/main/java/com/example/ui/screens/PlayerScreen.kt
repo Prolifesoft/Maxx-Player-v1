@@ -15,6 +15,8 @@ import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -23,26 +25,39 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -119,6 +134,53 @@ fun PlayerScreen(
     var hasSubtitles by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
+    var pendingResumePositionMs by remember { mutableLongStateOf(0L) }
+    var showResumePrompt by remember { mutableStateOf(false) }
+    var resumePromptPositionMs by remember { mutableLongStateOf(0L) }
+    var resumePromptDurationMs by remember { mutableLongStateOf(0L) }
+    val resumeButtonFocusRequester = remember { FocusRequester() }
+
+    fun formatDuration(ms: Long): String {
+        val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            String.format("%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
+    }
+
+    fun saveItemProgress(item: M3uItem?, rawPosMs: Long, rawDurMs: Long) {
+        if (showResumePrompt) return
+        if (item == null || item.url.isBlank()) return
+        if (item.type != ItemType.MOVIE && item.type != ItemType.SERIES) return
+        val effectivePosMs = if (rawPosMs > 1000L) rawPosMs else currentPositionMs
+        if (effectivePosMs <= 1000L) return
+
+        val safeDurMs = if (rawDurMs > 0L) rawDurMs else (durationMs.takeIf { it > 0L } ?: (effectivePosMs + 3_600_000L))
+        PlayerRepository.lastPositions[item.url] = effectivePosMs to safeDurMs
+
+        val progress = PlaybackProgressEntity(
+            url = item.url,
+            title = if (item.type == ItemType.SERIES) {
+                (item.seriesName ?: "") + "$epPrefix${item.episode ?: "?"}: ${item.title}"
+            } else {
+                item.title
+            },
+            logo = item.logo,
+            type = item.type.name,
+            positionMs = effectivePosMs,
+            durationMs = safeDurMs,
+            timestamp = System.currentTimeMillis()
+        )
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                db.iptvDao().insertPlaybackProgress(progress)
+            } catch (_: Exception) {}
+        }
+    }
     var epgNow by remember { mutableStateOf<EpgProgram?>(null) }
     var epgNext by remember { mutableStateOf<EpgProgram?>(null) }
     var currentResizeModeName by remember { mutableStateOf("Sığdır") }
@@ -130,19 +192,24 @@ fun PlayerScreen(
     val focusRequester = remember { FocusRequester() }
 
     // Request focus for D-Pad / Remote keys when panels or bottom bar close or screen opens
-    LaunchedEffect(showPlaylistSheet, showSettingsSheet, isControllerVisible) {
-        if (showPlaylistSheet || showSettingsSheet || !isControllerVisible) {
+    LaunchedEffect(showPlaylistSheet, showSettingsSheet, isControllerVisible, showResumePrompt) {
+        if (showPlaylistSheet || showSettingsSheet || !isControllerVisible || showResumePrompt) {
             isBottomBarFocused = false
         }
-        if (!showPlaylistSheet && !showSettingsSheet && !isControllerVisible) {
+        if (showResumePrompt) {
+            delay(80)
+            try {
+                resumeButtonFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        } else if (!showPlaylistSheet && !showSettingsSheet && !isControllerVisible) {
             try {
                 focusRequester.requestFocus()
             } catch (_: Exception) {}
         }
     }
 
-    LaunchedEffect(showPlaylistSheet, showSettingsSheet) {
-        if (!showPlaylistSheet && !showSettingsSheet) {
+    LaunchedEffect(showPlaylistSheet, showSettingsSheet, showResumePrompt) {
+        if (!showPlaylistSheet && !showSettingsSheet && !showResumePrompt) {
             try {
                 focusRequester.requestFocus()
             } catch (_: Exception) {}
@@ -244,25 +311,85 @@ fun PlayerScreen(
             }
     }
 
-    // D.5: Centralized playItem function
+    // D.5: Centralized playItem function with automatic resume position lookup
     fun playItem(item: M3uItem, list: List<M3uItem>) {
+        val previousItem = playingItem
+        if (previousItem != null && previousItem.url != item.url) {
+            try {
+                saveItemProgress(previousItem, exoPlayer.currentPosition, exoPlayer.duration)
+            } catch (_: Exception) {}
+        }
+
         val actualList = if (list.isNotEmpty()) list else listOf(item)
         activePlaylist = actualList
         PlayerRepository.currentPlaylist = actualList
         playingItem = item
         PlayerRepository.currentlyPlayingItem = item
 
-        val validList = actualList.filter { it.url.isNotBlank() }
-        if (validList.isNotEmpty()) {
-            val mediaItems = validList.map { createMediaItem(it) }
-            val startIndex = validList.indexOfFirst { it.url == item.url }.coerceAtLeast(0)
-            exoPlayer.setMediaItems(mediaItems, startIndex, C.TIME_UNSET)
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
-        } else if (item.url.isNotBlank()) {
-            exoPlayer.setMediaItem(createMediaItem(item))
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
+        scope.launch {
+            val preselectedChoice = PlayerRepository.preselectedResumeChoice
+            PlayerRepository.preselectedResumeChoice = null
+
+            var resumePosMs = 0L
+            var savedDurMs = 0L
+            if (item.type == ItemType.MOVIE || item.type == ItemType.SERIES) {
+                if (preselectedChoice == com.example.model.ResumeChoice.RESTART) {
+                    PlayerRepository.lastPositions.remove(item.url)
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        try { db.iptvDao().deleteProgressForUrl(item.url) } catch (_: Exception) {}
+                    }
+                    resumePosMs = 0L
+                } else {
+                    val cachedPos = PlayerRepository.getSavedPositionMs(item.url)
+                    if (cachedPos > 0L) {
+                        resumePosMs = cachedPos
+                        savedDurMs = PlayerRepository.lastPositions[item.url]?.second ?: 0L
+                    } else {
+                        val dbProgress = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                db.iptvDao().getProgressForUrl(item.url)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                        if (dbProgress != null && dbProgress.positionMs > 1000L) {
+                            val isNearEnd = dbProgress.durationMs > 30_000L &&
+                                dbProgress.positionMs >= dbProgress.durationMs - 8_000L
+                            if (!isNearEnd) {
+                                resumePosMs = dbProgress.positionMs
+                                savedDurMs = dbProgress.durationMs
+                                PlayerRepository.lastPositions[item.url] = dbProgress.positionMs to dbProgress.durationMs
+                            }
+                        }
+                    }
+                }
+            }
+
+            val shouldAskResume = resumePosMs > 0L && preselectedChoice == null
+            showResumePrompt = shouldAskResume
+            resumePromptPositionMs = if (shouldAskResume) resumePosMs else 0L
+            resumePromptDurationMs = if (shouldAskResume) savedDurMs else 0L
+
+            pendingResumePositionMs = resumePosMs
+            if (resumePosMs > 0L) {
+                currentPositionMs = resumePosMs
+            } else {
+                currentPositionMs = 0L
+            }
+
+            val startPosArg = if (resumePosMs > 0L) resumePosMs else C.TIME_UNSET
+            val validList = actualList.filter { it.url.isNotBlank() }
+            if (validList.isNotEmpty()) {
+                val mediaItems = validList.map { createMediaItem(it) }
+                val startIndex = validList.indexOfFirst { it.url == item.url }.coerceAtLeast(0)
+                exoPlayer.setMediaItems(mediaItems, startIndex, startPosArg)
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = !shouldAskResume
+            } else if (item.url.isNotBlank()) {
+                exoPlayer.setMediaItem(createMediaItem(item), startPosArg)
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = !shouldAskResume
+            }
         }
     }
 
@@ -299,8 +426,30 @@ fun PlayerScreen(
                 if (!mediaId.isNullOrBlank()) {
                     val found = activePlaylist.find { it.url == mediaId }
                     if (found != null) {
+                        val isNewItem = playingItem?.url != found.url
                         playingItem = found
                         PlayerRepository.currentlyPlayingItem = found
+                        if (isNewItem && (found.type == ItemType.MOVIE || found.type == ItemType.SERIES)) {
+                            scope.launch {
+                                var resumePos = PlayerRepository.getSavedPositionMs(found.url)
+                                if (resumePos <= 0L) {
+                                    val dbProg = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        try { db.iptvDao().getProgressForUrl(found.url) } catch (_: Exception) { null }
+                                    }
+                                    if (dbProg != null && dbProg.positionMs > 1000L) {
+                                        val isNearEnd = dbProg.durationMs > 30_000L && dbProg.positionMs >= dbProg.durationMs - 8_000L
+                                        if (!isNearEnd) {
+                                            resumePos = dbProg.positionMs
+                                            PlayerRepository.lastPositions[found.url] = dbProg.positionMs to dbProg.durationMs
+                                        }
+                                    }
+                                }
+                                if (resumePos > 0L) {
+                                    pendingResumePositionMs = resumePos
+                                    exoPlayer.seekTo(resumePos)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -345,7 +494,15 @@ fun PlayerScreen(
                     }
                     currentAttemptMimeType = fallbackMime
                     val retryItem = createMediaItem(current, fallbackMime)
-                    exoPlayer.setMediaItem(retryItem)
+                    val fallbackStartPos = if (pendingResumePositionMs > 0L) {
+                        pendingResumePositionMs
+                    } else {
+                        exoPlayer.currentPosition.coerceAtLeast(PlayerRepository.getSavedPositionMs(current.url))
+                    }
+                    if (fallbackStartPos > 0L) {
+                        pendingResumePositionMs = fallbackStartPos
+                    }
+                    exoPlayer.setMediaItem(retryItem, if (fallbackStartPos > 0L) fallbackStartPos else C.TIME_UNSET)
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
                     return
@@ -363,6 +520,13 @@ fun PlayerScreen(
                 durationMs = exoPlayer.duration.coerceAtLeast(0L)
                 if (playbackState == Player.STATE_READY) {
                     liveRetryCount = 0
+                    val targetResume = pendingResumePositionMs
+                    if (targetResume > 0L) {
+                        pendingResumePositionMs = 0L
+                        if (kotlin.math.abs(exoPlayer.currentPosition - targetResume) > 2500L) {
+                            exoPlayer.seekTo(targetResume)
+                        }
+                    }
                 }
             }
 
@@ -389,6 +553,7 @@ fun PlayerScreen(
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
                     wasPlaying = exoPlayer.isPlaying
+                    saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                     exoPlayer.pause()
                 }
                 Lifecycle.Event.ON_RESUME -> {
@@ -450,39 +615,16 @@ fun PlayerScreen(
         }
     }
 
-    // Resume playback for movie/series
-    LaunchedEffect(playingItem?.url) {
-        val currentItem = playingItem
-        if (currentItem != null && (currentItem.type == ItemType.MOVIE || currentItem.type == ItemType.SERIES)) {
-            val progress = db.iptvDao().getProgressForUrl(currentItem.url)
-            if (progress != null && progress.positionMs > 0 && progress.positionMs < progress.durationMs - 10000) {
-                exoPlayer.seekTo(progress.positionMs)
-            }
-        }
-    }
-
-    // Periodically save progress
+    // Periodically save progress every 2 seconds
     LaunchedEffect(playingItem?.url) {
         val currentItem = playingItem
         if (currentItem != null && (currentItem.type == ItemType.MOVIE || currentItem.type == ItemType.SERIES)) {
             while (true) {
-                delay(5000)
+                delay(2000)
                 val position = exoPlayer.currentPosition
                 val duration = exoPlayer.duration
-                if (position > 0 && duration > 0) {
-                    val progress = PlaybackProgressEntity(
-                        url = currentItem.url,
-                        title = if (currentItem.type == ItemType.SERIES) {
-                            currentItem.seriesName + "$epPrefix${currentItem.episode ?: "?"}: ${currentItem.title}"
-                        } else {
-                            currentItem.title
-                        },
-                        logo = currentItem.logo,
-                        type = currentItem.type.name,
-                        positionMs = position,
-                        durationMs = duration
-                    )
-                    db.iptvDao().insertPlaybackProgress(progress)
+                if (position > 1000L) {
+                    saveItemProgress(currentItem, position, duration)
                 }
             }
         }
@@ -492,30 +634,7 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         onDispose {
             try {
-                val currentItem = playingItem
-                if (currentItem != null && (currentItem.type == ItemType.MOVIE || currentItem.type == ItemType.SERIES)) {
-                    val position = exoPlayer.currentPosition
-                    val duration = exoPlayer.duration
-                    if (position > 0 && duration > 0) {
-                        val progress = PlaybackProgressEntity(
-                            url = currentItem.url,
-                            title = if (currentItem.type == ItemType.SERIES) {
-                                currentItem.seriesName + "$epPrefix${currentItem.episode ?: "?"}: ${currentItem.title}"
-                            } else {
-                                currentItem.title
-                            },
-                            logo = currentItem.logo,
-                            type = currentItem.type.name,
-                            positionMs = position,
-                            durationMs = duration
-                        )
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            try {
-                                db.iptvDao().insertPlaybackProgress(progress)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
+                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
             } catch (_: Exception) {}
             try {
                 exoPlayer.stop()
@@ -526,6 +645,13 @@ fun PlayerScreen(
 
     val isTvDevice = remember(context) { isTv(context) }
 
+    val exitPlayer: () -> Unit = {
+        try {
+            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+        } catch (_: Exception) {}
+        onBack()
+    }
+
     // Back button handling hierarchy: dialog -> panel -> settings -> controls (TV) -> exit player
     BackHandler(enabled = true) {
         when {
@@ -533,7 +659,7 @@ fun PlayerScreen(
             showPlaylistSheet -> showPlaylistSheet = false
             showSettingsSheet -> showSettingsSheet = false
             isTvDevice && isControllerVisible -> isControllerVisible = false
-            else -> onBack()
+            else -> exitPlayer()
         }
     }
 
@@ -619,14 +745,14 @@ fun PlayerScreen(
                             return@onPreviewKeyEvent true
                         }
                         else -> {
-                            onBack()
+                            exitPlayer()
                             return@onPreviewKeyEvent true
                         }
                     }
                 }
 
-                // If settings sheet is open, let it process its keys
-                if (showSettingsSheet) {
+                // If settings sheet or resume prompt is open, let it process its keys
+                if (showSettingsSheet || showResumePrompt) {
                     return@onPreviewKeyEvent false
                 }
 
@@ -690,7 +816,12 @@ fun PlayerScreen(
                                 false
                             } else {
                                 if (keyEvent.nativeKeyEvent.repeatCount == 0) {
-                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    if (exoPlayer.isPlaying) {
+                                        saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
                                     isControllerVisible = true
                                 }
                                 true
@@ -698,7 +829,12 @@ fun PlayerScreen(
                         }
                         AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                             if (keyEvent.nativeKeyEvent.repeatCount == 0) {
-                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                if (exoPlayer.isPlaying) {
+                                    saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+                                    exoPlayer.pause()
+                                } else {
+                                    exoPlayer.play()
+                                }
                                 isControllerVisible = true
                             }
                             true
@@ -708,12 +844,14 @@ fun PlayerScreen(
                                 false
                             } else {
                                 exoPlayer.seekBack()
+                                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                                 isControllerVisible = true
                                 true
                             }
                         }
                         AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
                             exoPlayer.seekBack()
+                            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                             isControllerVisible = true
                             true
                         }
@@ -722,12 +860,14 @@ fun PlayerScreen(
                                 false
                             } else {
                                 exoPlayer.seekForward()
+                                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                                 isControllerVisible = true
                                 true
                             }
                         }
                         AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                             exoPlayer.seekForward()
+                            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                             isControllerVisible = true
                             true
                         }
@@ -942,7 +1082,7 @@ fun PlayerScreen(
 
             // Alt Bilgi Çubuğu (4 sn sonra otomatik gizlenir)
             AnimatedVisibility(
-                visible = isControllerVisible && !showPlaylistSheet && !showSettingsSheet,
+                visible = isControllerVisible && !showPlaylistSheet && !showSettingsSheet && !showResumePrompt,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -959,6 +1099,7 @@ fun PlayerScreen(
                     onPlayPauseClick = {
                         lastInteractionTime = System.currentTimeMillis()
                         if (exoPlayer.isPlaying) {
+                            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                             exoPlayer.pause()
                         } else {
                             exoPlayer.play()
@@ -967,14 +1108,17 @@ fun PlayerScreen(
                     onSeekBackClick = {
                         lastInteractionTime = System.currentTimeMillis()
                         exoPlayer.seekBack()
+                        saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                     },
                     onSeekForwardClick = {
                         lastInteractionTime = System.currentTimeMillis()
                         exoPlayer.seekForward()
+                        saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
                     },
                     onSeekTo = { posMs ->
                         lastInteractionTime = System.currentTimeMillis()
                         exoPlayer.seekTo(posMs)
+                        saveItemProgress(playingItem, posMs, exoPlayer.duration)
                     },
                     onSubtitleClick = {
                         lastInteractionTime = System.currentTimeMillis()
@@ -1011,6 +1155,197 @@ fun PlayerScreen(
                 playlistPanelKeyHandler = handler
             }
         )
+
+        // Stage 1: Kaldığı Yerden Devam Et / Baştan Başla Seçim Ekranı
+        AnimatedVisibility(
+            visible = showResumePrompt,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .pointerInput(Unit) { detectTapGestures { } },
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFF101622).copy(alpha = 0.96f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                    modifier = Modifier
+                        .widthIn(min = 300.dp, max = 460.dp)
+                        .padding(horizontal = 24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 22.dp, vertical = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            var promptLogoFailed by remember(playingItem?.logo) { mutableStateOf(false) }
+                            if (!playingItem?.logo.isNullOrBlank() && !promptLogoFailed) {
+                                AsyncImage(
+                                    model = playingItem?.logo,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF080F19)),
+                                    contentScale = ContentScale.Crop,
+                                    onError = { promptLogoFailed = true }
+                                )
+                            } else {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_app_icon),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF080F19)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = playingItem?.let {
+                                        if (it.type == ItemType.SERIES) {
+                                            (it.seriesName ?: "") + " $epPrefix${it.episode ?: "?"}: ${it.title}"
+                                        } else {
+                                            it.title
+                                        }
+                                    }.orEmpty(),
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = stringResource(
+                                        R.string.resume_playback_prompt_subtitle,
+                                        formatDuration(resumePromptPositionMs)
+                                    ),
+                                    color = Color(0xFFB0BEC5),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        val totalDur = resumePromptDurationMs.takeIf { it > 0L } ?: durationMs
+                        if (totalDur > 0L && resumePromptPositionMs > 0L) {
+                            val ratio = (resumePromptPositionMs.toFloat() / totalDur.toFloat()).coerceIn(0f, 1f)
+                            Spacer(modifier = Modifier.height(14.dp))
+                            LinearProgressIndicator(
+                                progress = { ratio },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(5.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFFE50914),
+                                trackColor = Color.White.copy(alpha = 0.2f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        // 1. Buton: Kaldığı Yerden Devam Et
+                        Button(
+                            onClick = {
+                                val targetPos = resumePromptPositionMs
+                                showResumePrompt = false
+                                if (targetPos > 0L) {
+                                    pendingResumePositionMs = targetPos
+                                    exoPlayer.seekTo(targetPos)
+                                }
+                                exoPlayer.playWhenReady = true
+                                exoPlayer.play()
+                                lastInteractionTime = System.currentTimeMillis()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE50914),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .focusRequester(resumeButtonFocusRequester)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${stringResource(R.string.resume_from_last_position)} (${formatDuration(resumePromptPositionMs)})",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 2. Buton: Baştan Başla
+                        OutlinedButton(
+                            onClick = {
+                                val itemUrl = playingItem?.url
+                                showResumePrompt = false
+                                pendingResumePositionMs = 0L
+                                resumePromptPositionMs = 0L
+                                currentPositionMs = 0L
+                                if (!itemUrl.isNullOrBlank()) {
+                                    PlayerRepository.lastPositions.remove(itemUrl)
+                                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                        try {
+                                            db.iptvDao().deleteProgressForUrl(itemUrl)
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                                exoPlayer.seekTo(0L)
+                                exoPlayer.playWhenReady = true
+                                exoPlayer.play()
+                                lastInteractionTime = System.currentTimeMillis()
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color(0xFF1A2332),
+                                contentColor = Color.White
+                            ),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.start_from_beginning),
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // Ayarlar Menüsü (YouTube tarzı, D-pad ile gezilebilir)
         PlayerSettingsSheet(

@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -700,19 +701,15 @@ fun PlayListsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                Box(
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
+                                    contentDescription = playlist.name,
                                     modifier = Modifier
                                         .size(if (isLandscapeScreen) 36.dp else 40.dp)
-                                        .background(RedPrimary, RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        if (playlist.username.isEmpty()) Icons.Default.Link else Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(if (isLandscapeScreen) 20.dp else 24.dp)
-                                    )
-                                }
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF080F19)),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(

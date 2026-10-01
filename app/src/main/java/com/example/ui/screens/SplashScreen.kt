@@ -57,6 +57,16 @@ fun SplashScreen(
     var hasNavigated by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // Stage 2: Preload last used playlist from cache while splash intro plays
+    LaunchedEffect(Unit) {
+        try {
+            val targetUrl = com.example.model.PlaylistRepository.resolveLastOrFirstPlaylistUrl(context)
+            if (!targetUrl.isNullOrBlank() && com.example.model.PlaylistRepository.hasCacheForUrl(context, targetUrl)) {
+                com.example.model.PlaylistRepository.loadPlaylist(context, targetUrl)
+            }
+        } catch (_: Exception) {}
+    }
+
     androidx.activity.compose.BackHandler(enabled = true) {
         // Ignore or skip intro safely without popping the root NavHost destination
     }
@@ -79,27 +89,34 @@ fun SplashScreen(
             scope.launch {
                 try {
                     val db = com.example.model.db.AppDatabase.getDatabase(context)
-                    val (existingUser, hasPlaylists) = withContext(Dispatchers.IO) {
+                    val (existingUser, targetPlaylistUrl) = withContext(Dispatchers.IO) {
                         val user = db.iptvDao().getFirstUser()
                         when {
                             user != null && (user.email.isNullOrBlank() || user.email == "demo@fixekran.xyz" || user.id == "demo@fixekran.xyz") -> {
                                 db.iptvDao().clearUsers()
-                                Pair<com.example.model.db.UserEntity?, Boolean>(null, false)
+                                Pair<com.example.model.db.UserEntity?, String?>(null, null)
                             }
-                            user != null -> Pair<com.example.model.db.UserEntity?, Boolean>(
+                            user != null -> Pair<com.example.model.db.UserEntity?, String?>(
                                 user,
-                                db.iptvDao().getPlaylistsForUserSync(user.id).isNotEmpty()
+                                com.example.model.PlaylistRepository.resolveLastOrFirstPlaylistUrl(context, user.id)
                             )
-                            else -> Pair<com.example.model.db.UserEntity?, Boolean>(null, false)
+                            else -> Pair<com.example.model.db.UserEntity?, String?>(null, null)
                         }
                     }
                     activity?.let { act ->
                         com.example.model.SettingsManager.applyOrientationToActivity(act)
                     }
                     if (existingUser != null) {
-                        val target = if (hasPlaylists) com.example.ui.NavRoutes.PLAYLISTS
-                                     else com.example.ui.NavRoutes.DEVICE_INFO
-                        onNavigateToNext(target, existingUser.id)
+                        if (!targetPlaylistUrl.isNullOrBlank()) {
+                            if (com.example.model.PlaylistRepository.hasCacheForUrl(context, targetPlaylistUrl) &&
+                                com.example.model.PlaylistRepository.playlist.value.isEmpty()
+                            ) {
+                                com.example.model.PlaylistRepository.loadPlaylist(context, targetPlaylistUrl)
+                            }
+                            onNavigateToNext(com.example.ui.NavRoutes.DASHBOARD, existingUser.id)
+                        } else {
+                            onNavigateToNext(com.example.ui.NavRoutes.DEVICE_INFO, existingUser.id)
+                        }
                     } else {
                         onNavigateToNext(com.example.ui.NavRoutes.GOOGLE_SIGN_IN, null)
                     }

@@ -37,13 +37,69 @@ fun SeriesDetailSheet(
     onClose: () -> Unit = {}
 ) {
     com.example.util.KeepSystemBarsHidden()
+    val context = LocalContext.current
     val seriesName = items.firstOrNull()?.seriesName ?: items.firstOrNull()?.title ?: stringResource(R.string.series_fallback)
     val groupedBySeason = remember(items) { items.groupBy { it.season ?: 1 }.toSortedMap() }
     val seasons = groupedBySeason.keys.toList()
     var selectedSeasonIndex by remember(items) { mutableStateOf(0) }
 
+    var episodeProgressMap by remember(items) {
+        mutableStateOf<Map<String, Pair<Long, Long>>>(
+            items.mapNotNull { ep ->
+                com.example.model.PlayerRepository.lastPositions[ep.url]?.let { ep.url to it }
+            }.toMap()
+        )
+    }
+    var lastWatchedEpisode by remember(items) { mutableStateOf<M3uItem?>(null) }
+
+    LaunchedEffect(items) {
+        try {
+            val dao = com.example.model.db.AppDatabase.getDatabase(context).iptvDao()
+            val mutableMap = mutableMapOf<String, Pair<Long, Long>>()
+            var latestTs = -1L
+            var latestEp: M3uItem? = null
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                for (ep in items) {
+                    if (ep.url.isNotBlank()) {
+                        val cached = com.example.model.PlayerRepository.lastPositions[ep.url]
+                        val dbProg = try { dao.getProgressForUrl(ep.url) } catch (_: Exception) { null }
+                        val pos = cached?.first ?: dbProg?.positionMs ?: 0L
+                        val dur = cached?.second ?: dbProg?.durationMs ?: 0L
+                        val ts = dbProg?.timestamp ?: (if (cached != null) System.currentTimeMillis() else 0L)
+                        if (pos > 1000L) {
+                            mutableMap[ep.url] = pos to dur
+                            if (ts > latestTs) {
+                                latestTs = ts
+                                latestEp = ep
+                            }
+                        }
+                    }
+                }
+            }
+            episodeProgressMap = mutableMap
+            lastWatchedEpisode = latestEp
+            if (latestEp != null) {
+                val targetSeason = latestEp!!.season ?: 1
+                val seasonIdx = seasons.indexOf(targetSeason)
+                if (seasonIdx >= 0) {
+                    selectedSeasonIndex = seasonIdx
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    fun formatMs(ms: Long): String {
+        val totalSec = (ms / 1000L).coerceAtLeast(0L)
+        val hrs = totalSec / 3600L
+        val mins = (totalSec % 3600L) / 60L
+        val secs = totalSec % 60L
+        return if (hrs > 0) String.format("%d:%02d:%02d", hrs, mins, secs)
+        else String.format("%02d:%02d", mins, secs)
+    }
 
     Column(
         modifier = Modifier
@@ -67,6 +123,27 @@ fun SeriesDetailSheet(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            val resumeEp = lastWatchedEpisode
+            if (resumeEp != null) {
+                val posPair = episodeProgressMap[resumeEp.url]
+                val posStr = if (posPair != null) " (${formatMs(posPair.first)})" else ""
+                Button(
+                    onClick = { onPlayStream(resumeEp) },
+                    colors = ButtonDefaults.buttonColors(containerColor = RedPrimary),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(end = 8.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Devam Et: S${resumeEp.season ?: 1} B${resumeEp.episode ?: "?"}$posStr",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             IconButton(onClick = onClose, modifier = Modifier.size(if (isLandscape) 32.dp else 40.dp)) {
                 Icon(
                     imageVector = Icons.Default.Close,
@@ -104,23 +181,63 @@ fun SeriesDetailSheet(
             ) {
                 items(episodes.sortedBy { it.episode ?: 0 }) { episode ->
                     val epTitle = "${stringResource(R.string.episode_prefix)} ${episode.episode ?: "?"}: ${episode.title}"
-                    Row(
+                    val prog = episodeProgressMap[episode.url]
+                    val hasProg = prog != null && prog.first > 1000L
+                    val fraction = if (prog != null && prog.second > 0L) {
+                        (prog.first.toFloat() / prog.second.toFloat()).coerceIn(0.02f, 1f)
+                    } else 0f
+
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onPlayStream(episode) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .background(
+                                if (lastWatchedEpisode?.url == episode.url) RedPrimary.copy(alpha = 0.12f)
+                                else Color.Transparent
+                            )
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
                     ) {
-                        Icon(Icons.Default.Tv, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            text = epTitle,
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (hasProg) Icons.Default.PlayCircleFilled else Icons.Default.Tv,
+                                contentDescription = null,
+                                tint = if (hasProg) RedPrimary else Color.Gray,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = epTitle,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = if (hasProg) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (prog != null && prog.first > 1000L) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = formatMs(prog.first),
+                                    color = Color(0xFFFFB300),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        if (hasProg && fraction > 0f) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { fraction },
+                                color = RedPrimary,
+                                trackColor = Color.DarkGray.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 40.dp)
+                                    .height(3.dp)
+                            )
+                        }
                     }
                     HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f), modifier = Modifier.padding(start = 56.dp))
                 }
