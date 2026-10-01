@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.CircularProgressIndicator
@@ -223,25 +225,15 @@ fun SplashScreen(
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.padding(24.dp)
             ) {
-                Box(
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
+                    contentDescription = "MAXX PLAYER",
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier
-                        .size(96.dp)
+                        .size(104.dp)
                         .scale(pulseScale)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(RedPrimary, Color(0xFFB71C1C))
-                            ),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Tv,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(52.dp)
-                    )
-                }
+                        .clip(RoundedCornerShape(24.dp))
+                )
 
                 Spacer(modifier = Modifier.height(24.dp))
 

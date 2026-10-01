@@ -3,7 +3,9 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
@@ -50,11 +52,13 @@ fun WelcomeScreen(
                 .padding(horizontal = 16.dp, vertical = 28.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Icon(
-                imageVector = Icons.Default.GridView,
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = R.drawable.img_app_icon),
                 contentDescription = "Logo",
-                tint = Color.White,
-                modifier = Modifier.size(48.dp)
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(16.dp))
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(

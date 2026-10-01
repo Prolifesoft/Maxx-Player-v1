@@ -162,24 +162,14 @@ fun GoogleSignInScreen(
                 .verticalScroll(rememberScrollState())
         ) {
             // App Icon & Glow
-            Box(
+            androidx.compose.foundation.Image(
+                painter = painterResource(id = R.drawable.img_app_icon),
+                contentDescription = stringResource(R.string.app_name),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier
-                    .size(80.dp)
+                    .size(88.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0xFFE50914), Color(0xFFB81D24))
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
