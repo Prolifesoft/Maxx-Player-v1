@@ -1,0 +1,8 @@
+{
+  "name": "MAXİ PANEL PRO3",
+  "description": "IPTV player with support for M3U playlists and Xtream Codes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

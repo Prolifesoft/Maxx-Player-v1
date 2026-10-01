@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- Dark background -->
+    <path
+        android:fillColor="#0F172A"
+        android:pathData="M0,0h320v180h-320z" />
+    <!-- Accent border/bar -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M0,172h320v8h-320z" />
+    <!-- Red rounded play badge -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M130,46h60c8.8,0 16,7.2 16,16v44c0,8.8 -7.2,16 -16,16h-60c-8.8,0 -16,-7.2 -16,-16v-44c0,-8.8 7.2,-16 16,-16z" />
+    <!-- Play triangle inside badge -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M150,68v32l28,-16z" />
+    <!-- Bottom accent bar representing MAXX PLAYER -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M104,136h112v6h-112z" />
+</vector>

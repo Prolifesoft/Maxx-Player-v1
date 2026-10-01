@@ -1,0 +1,11 @@
+@Composable
+fun PlayerScreen() {
+    val context = LocalContext.current
+    
+    val db = remember { AppDatabase.getDatabase(context) }
+    val scope = rememberCoroutineScope()
+    var playingItem by remember { mutableStateOf(PlayerRepository.currentlyPlayingItem) }
+    
+    val epPrefix = stringResource(R.string.episode_dash_prefix)
+    var showReportDialog by remember { mutableStateOf(false) }
+    var isControllerVisible by remember { mutableStateOf(true) }

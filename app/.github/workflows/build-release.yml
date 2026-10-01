@@ -1,0 +1,155 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew || true
+
+      - name: Extract versionCode and versionName
+        id: version_extract
+        run: |
+          VERSION_CODE=$(grep -E 'versionCode\s*=\s*[0-9]+' build.gradle.kts | head -n 1 | sed -E 's/.*versionCode\s*=\s*([0-9]+).*/\1/')
+          VERSION_NAME=$(grep -E 'versionName\s*=\s*"[^"]+"' build.gradle.kts | head -n 1 | sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/')
+          
+          if [ -z "$VERSION_CODE" ]; then VERSION_CODE="1"; fi
+          if [ -z "$VERSION_NAME" ]; then VERSION_NAME="1.0"; fi
+
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "Extracted versionCode: $VERSION_CODE, versionName: $VERSION_NAME"
+
+      - name: Build Release APK
+        run: ./gradlew clean assembleRelease
+        env:
+          KEYSTORE_PATH: ""
+          STORE_PASSWORD: ""
+          KEY_PASSWORD: ""
+
+      - name: Verify APK Output
+        run: |
+          APK_PATH="build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "Error: Release APK not found at $APK_PATH"
+            exit 1
+          fi
+          
+          FILE_SIZE=$(stat -c%s "$APK_PATH")
+          echo "APK size: $FILE_SIZE bytes"
+          if [ "$FILE_SIZE" -lt 1000 ]; then
+            echo "Error: APK file is too small or empty."
+            exit 1
+          fi
+
+          # Check AndroidManifest.xml inside APK
+          if ! unzip -l "$APK_PATH" | grep -q "AndroidManifest.xml"; then
+            echo "Error: AndroidManifest.xml not found inside APK."
+            exit 1
+          fi
+          echo "APK verification passed successfully."
+
+      - name: Generate Release Notes & Changed Files
+        id: release_info
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SOURCE_URL="https://github.com/${{ github.repository }}/commit/$COMMIT_SHA"
+          
+          # Get changed files using git diff-tree
+          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" | tr '\n' ', ' | sed 's/,$//')
+          if [ -z "$CHANGED_FILES" ]; then
+            CHANGED_FILES="build.gradle.kts, src/"
+          fi
+
+          # Get commit message for release notes
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          
+          RELEASE_NOTES="- Commit: $COMMIT_MSG\n- Sürüm güncellemesi ve iyileştirmeler yapıldı.\n- Değişen dosya grupları otomatik işlendi."
+          
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
+          echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_ENV
+          echo "SOURCE_URL=$SOURCE_URL" >> $GITHUB_ENV
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_ENV
+          echo -e "$RELEASE_NOTES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          name: MAXX PLAYER v${{ env.VERSION_NAME }}
+          files: build/outputs/apk/release/app-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send Draft Release to Odoo
+        run: |
+          APK_URL="https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION_NAME }}/app-release.apk"
+          ODOO_URL="${{ secrets.MAXX_ODOO_URL }}"
+          if [ -z "$ODOO_URL" ]; then
+            ODOO_URL="https://maxxplayers.com"
+          fi
+          
+          PAYLOAD=$(jq -n \
+            --arg commit_sha "${{ env.COMMIT_SHA }}" \
+            --arg version_name "${{ env.VERSION_NAME }}" \
+            --argjson version_code "${{ env.VERSION_CODE }}" \
+            --arg apk_url "$APK_URL" \
+            --arg apk_filename "maxx-player.apk" \
+            --arg source_branch "main" \
+            --arg source_url "${{ env.SOURCE_URL }}" \
+            --arg changed_files "${{ env.CHANGED_FILES }}" \
+            --arg release_notes "${{ env.RELEASE_NOTES }}" \
+            '{
+              jsonrpc: "2.0",
+              method: "call",
+              params: {
+                commit_sha: $commit_sha,
+                version_name: $version_name,
+                version_code: $version_code,
+                apk_url: $apk_url,
+                apk_filename: $apk_filename,
+                source_branch: $source_branch,
+                source_url: $source_url,
+                changed_files: $changed_files,
+                release_notes: $release_notes
+              }
+            }')
+
+          echo "Sending JSON-RPC request to Odoo drafting endpoint..."
+          
+          RESPONSE=$(curl -s -X POST "$ODOO_URL/api/v1/release/draft" \
+            -H "Content-Type: application/json" \
+            -H "X-Maxx-Release-Secret: ${{ secrets.MAXX_ODOO_RELEASE_SECRET }}" \
+            -d "$PAYLOAD")
+
+          echo "Odoo Response received."
+          
+          # Check if response contains success status or result
+          if echo "$RESPONSE" | grep -q "success"; then
+            echo "Odoo draft release created successfully."
+          else
+            echo "Error: Odoo request failed or returned error response."
+            echo "Response: $RESPONSE"
+            exit 1
+          fi

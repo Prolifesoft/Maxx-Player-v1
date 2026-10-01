@@ -1,0 +1,1 @@
+sed -i 's/buildConfigField("String", "GOOGLE_CLIENT_ID", "\\"${System.getenv(\\"GOOGLE_CLIENT_ID\\") ?: \\"\\"}\\"")/buildConfigField("String", "GOOGLE_CLIENT_ID", "\"\\"\" + (System.getenv(\"GOOGLE_CLIENT_ID\") ?: \"\") + \"\\"\"")/g' app/build.gradle.kts
