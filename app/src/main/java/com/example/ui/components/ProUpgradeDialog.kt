@@ -72,8 +72,8 @@ data class PortalReachabilityResult(
 )
 
 suspend fun checkPortalReachability(primaryUrl: String): PortalReachabilityResult = withContext(Dispatchers.IO) {
-    val cleanPrimary = primaryUrl.trim().ifBlank { "https://maxxplayers.com/my/maxx" }
-    val mainSiteUrl = "https://maxxplayers.com"
+    val shopUrl = DeviceManager.getPackageShopUrl()
+    val cleanPrimary = primaryUrl.trim().ifBlank { shopUrl }
 
     fun probeUrl(target: String): Pair<Boolean, Int> {
         return try {
@@ -105,14 +105,14 @@ suspend fun checkPortalReachability(primaryUrl: String): PortalReachabilityResul
         )
     }
 
-    if (!cleanPrimary.equals(mainSiteUrl, ignoreCase = true)) {
-        val (mainOk, mainCode) = probeUrl(mainSiteUrl)
-        if (mainOk) {
+    if (!cleanPrimary.equals(shopUrl, ignoreCase = true)) {
+        val (shopOk, shopCode) = probeUrl(shopUrl)
+        if (shopOk) {
             return@withContext PortalReachabilityResult(
                 state = PortalCheckState.FALLBACK_MAIN,
-                resolvedUrl = mainSiteUrl,
-                statusMessage = "Ana portal aktif (maxxplayers.com üzerinden açılacak)",
-                httpCode = mainCode
+                resolvedUrl = shopUrl,
+                statusMessage = "Paketler mağazası aktif (maxxplayers.com üzerinden açılacak)",
+                httpCode = shopCode
             )
         }
     }
@@ -131,29 +131,45 @@ fun openExternalBrowserSafely(
     url: String,
     onFallbackToInApp: (() -> Unit)? = null
 ) {
-    val formattedUrl = url.trim().let {
+    val defaultShop = DeviceManager.getPackageShopUrl()
+    val target = if (url.isBlank() || url.equals("https://maxxplayers.com", ignoreCase = true) || url.equals("https://maxxplayers.com/", ignoreCase = true) || url.contains("/my/maxx")) {
+        defaultShop
+    } else {
+        url.trim()
+    }
+    val formattedUrl = target.let {
         if (!it.startsWith("http://") && !it.startsWith("https://")) "https://$it" else it
     }
+    var started = false
     try {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(formattedUrl)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addCategory(Intent.CATEGORY_BROWSABLE)
         }
         context.startActivity(intent)
-    } catch (e: Exception) {
+        started = true
+    } catch (_: Exception) {
+        try {
+            val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(formattedUrl)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(fallbackIntent)
+            started = true
+        } catch (_: Exception) {}
+    }
+
+    if (started) {
+        Toast.makeText(context, "Paketler sayfasına yönlendiriliyor...", Toast.LENGTH_SHORT).show()
+    } else {
         if (onFallbackToInApp != null) {
-            Toast.makeText(
-                context,
-                "Harici tarayıcı açılamadı, uygulama içi portal açılıyor...",
-                Toast.LENGTH_SHORT
-            ).show()
             onFallbackToInApp()
         } else {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            clipboard?.setPrimaryClip(ClipData.newPlainText("Web Portalı", formattedUrl))
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Paket Satın Alma", formattedUrl))
             Toast.makeText(
                 context,
-                "Cihazda web tarayıcısı bulunamadı. Adres panoya kopyalandı: $formattedUrl",
+                "Adres panoya kopyalandı: $formattedUrl",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -373,26 +389,32 @@ fun ProUpgradeDialog(
 
                 Spacer(modifier = Modifier.height(if (isLandscape) 12.dp else 16.dp))
 
-                // Ana Buton: Uygulama İçi Web Portalını Aç (Dış tarayıcı sorunlarını önler)
+                // Ana Buton: Paket Satın Al (Doğrudan tarayıcıda veya uygulama içinde açar)
                 Button(
-                    onClick = { showInAppWebPortal = true },
+                    onClick = {
+                        openExternalBrowserSafely(
+                            context = context,
+                            url = reachability.resolvedUrl,
+                            onFallbackToInApp = { showInAppWebPortal = true }
+                        )
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF6366F1),
+                        containerColor = Color(0xFF1E88E5),
                         contentColor = Color.White
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Default.OpenInNew,
+                        imageVector = Icons.Default.ShoppingCart,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Web Portalına Git",
+                        text = "Paket Satın Al (maxxplayers.com)",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
@@ -400,30 +422,24 @@ fun ProUpgradeDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // İkincil Butonlar: Harici Tarayıcıda Aç & Kapat
+                // İkincil Butonlar: Uygulama İçinde Aç & Kapat
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(
-                        onClick = {
-                            openExternalBrowserSafely(
-                                context = context,
-                                url = reachability.resolvedUrl,
-                                onFallbackToInApp = { showInAppWebPortal = true }
-                            )
-                        }
+                        onClick = { showInAppWebPortal = true }
                     ) {
                         Icon(
-                            imageVector = Icons.Default.OpenInBrowser,
+                            imageVector = Icons.Default.Language,
                             contentDescription = null,
                             tint = Color(0xFF94A3B8),
                             modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Dış Tarayıcıda Aç",
+                            text = "Uygulama İçinde Aç",
                             color = Color(0xFF94A3B8),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -447,14 +463,14 @@ fun ProUpgradeDialog(
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebPortalDialog(
-    initialUrl: String = DeviceManager.getWebPortalUrl(),
+    initialUrl: String = DeviceManager.getPackageShopUrl(),
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val deviceId = remember { DeviceManager.getDeviceId() }
     val deviceKey = remember { DeviceManager.getDeviceKey() }
 
-    var currentUrl by remember { mutableStateOf(initialUrl.ifBlank { "https://maxxplayers.com/my/maxx" }) }
+    var currentUrl by remember { mutableStateOf(initialUrl.ifBlank { DeviceManager.getPackageShopUrl() }) }
     var isLoading by remember { mutableStateOf(true) }
     var loadProgress by remember { mutableIntStateOf(0) }
     var pageError by remember { mutableStateOf<String?>(null) }
@@ -538,13 +554,13 @@ fun WebPortalDialog(
                         )
                     }
 
-                    // Hızlı URL Geçişi (/my/maxx <-> Ana Sayfa)
+                    // Hızlı URL Geçişi (Paketler <-> Hesabım)
                     Surface(
                         onClick = {
-                            val nextUrl = if (currentUrl.contains("/my/maxx")) {
-                                "https://maxxplayers.com"
-                            } else {
+                            val nextUrl = if (currentUrl.contains("/shop")) {
                                 "https://maxxplayers.com/my/maxx"
+                            } else {
+                                DeviceManager.getPackageShopUrl()
                             }
                             pageError = null
                             isLoading = true
@@ -557,7 +573,7 @@ fun WebPortalDialog(
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
                         Text(
-                            text = if (currentUrl.contains("/my/maxx")) "Ana Sayfa" else "Hesabım",
+                            text = if (currentUrl.contains("/shop")) "Hesabım" else "Paketler",
                             color = Color(0xFF93C5FD),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -862,13 +878,14 @@ fun WebPortalDialog(
                                         onClick = {
                                             pageError = null
                                             isLoading = true
-                                            currentUrl = "https://maxxplayers.com"
-                                            webViewRef?.loadUrl("https://maxxplayers.com")
+                                            val shopUrl = DeviceManager.getPackageShopUrl()
+                                            currentUrl = shopUrl
+                                            webViewRef?.loadUrl(shopUrl)
                                         },
                                         border = BorderStroke(1.dp, Color(0xFF6366F1)),
                                         shape = RoundedCornerShape(10.dp)
                                     ) {
-                                        Text("Ana Sayfayı Aç", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Paketler Sayfası", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
 

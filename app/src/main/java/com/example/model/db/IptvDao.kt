@@ -43,6 +43,9 @@ interface IptvDao {
     @androidx.room.Delete
     suspend fun deletePlaylist(playlist: PlaylistEntity)
 
+    @Query("DELETE FROM playlists WHERE LOWER(name) LIKE '%kredi%' OR LOWER(name) LIKE '%kredı%' OR LOWER(name) LIKE '%credit%' OR name LIKE '%KREDİ%' OR name LIKE '%KREDI%' OR name LIKE '%Kredi%' OR name LIKE '%kredi%' OR name LIKE '%Krediler%' OR name LIKE '%krediler%' OR name LIKE '%Bakiye%' OR name LIKE '%bakiye%' OR LOWER(hostUrl) LIKE '%kredi%' OR LOWER(hostUrl) LIKE '%credit%' OR LOWER(hostUrl) LIKE '%/shop%' OR LOWER(hostUrl) LIKE '%/category%' OR LOWER(hostUrl) LIKE '%/product%' OR (hostUrl NOT LIKE 'http://%' AND hostUrl NOT LIKE 'https://%')")
+    suspend fun deleteCreditAndInvalidPlaylists()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChannels(channels: List<ChannelEntity>)
 

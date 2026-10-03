@@ -28,6 +28,9 @@ import com.example.ui.components.ProUpgradeDialog
 import com.example.ui.theme.RedPrimary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import com.example.ui.components.openExternalBrowserSafely
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,7 +55,27 @@ fun PlayListsScreen(
         db.iptvDao().getAllPlaylists().collectAsState(initial = emptyList())
     }
     val allPlaylists by db.iptvDao().getAllPlaylists().collectAsState(initial = emptyList())
-    val playlists = if (userPlaylists.isNotEmpty()) userPlaylists else allPlaylists
+    val rawPlaylists = if (userPlaylists.isNotEmpty()) userPlaylists else allPlaylists
+    // Krediler ve mağaza web bağlantıları çalma listesi olarak gösterilmemelidir
+    val playlists = remember(rawPlaylists) {
+        rawPlaylists.filter { p ->
+            !OdooIntegrationManager.isCreditOrShopItem(p.name, p.hostUrl, p.username)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                db.iptvDao().deleteCreditAndInvalidPlaylists()
+                val allInDb = db.iptvDao().getAllPlaylistsSync()
+                for (p in allInDb) {
+                    if (OdooIntegrationManager.isCreditOrShopItem(p.name, p.hostUrl, p.username)) {
+                        db.iptvDao().deletePlaylist(p)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
 
     val daysRemaining by DeviceManager.trialDaysLeft.collectAsState()
     val isPro by DeviceManager.isProState.collectAsState()
@@ -72,9 +95,19 @@ fun PlayListsScreen(
     var showProDialog by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
     var showEditCredentialsDialog by remember { mutableStateOf(false) }
+    var showInAppWebShop by remember { mutableStateOf(false) }
+    var inAppShopUrl by remember { mutableStateOf(DeviceManager.getPackageShopUrl()) }
+
+    if (showInAppWebShop) {
+        com.example.ui.components.WebPortalDialog(
+            initialUrl = inAppShopUrl,
+            onDismiss = { showInAppWebShop = false }
+        )
+    }
 
     BackHandler(enabled = true) {
         when {
+            showInAppWebShop -> showInAppWebShop = false
             showProfileSheet -> showProfileSheet = false
             showProDialog -> showProDialog = false
             showEditCredentialsDialog -> showEditCredentialsDialog = false
@@ -335,15 +368,23 @@ fun PlayListsScreen(
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
-                            if (!isProOrInTrial) {
-                                Button(
-                                    onClick = { showProDialog = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(28.dp)
-                                ) {
-                                    Text("Web Portalı", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
+                            Button(
+                                onClick = {
+                                    val shopUrl = DeviceManager.getPackageShopUrl()
+                                    inAppShopUrl = shopUrl
+                                    openExternalBrowserSafely(
+                                        context = context,
+                                        url = shopUrl,
+                                        onFallbackToInApp = { showInAppWebShop = true }
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Paket Satın Al", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -446,15 +487,23 @@ fun PlayListsScreen(
                                 fontSize = 10.sp
                             )
                         }
-                        if (!isProOrInTrial) {
-                            Button(
-                                onClick = { showProDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("Web Portalı", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
+                        Button(
+                            onClick = {
+                                val shopUrl = DeviceManager.getPackageShopUrl()
+                                inAppShopUrl = shopUrl
+                                openExternalBrowserSafely(
+                                    context = context,
+                                    url = shopUrl,
+                                    onFallbackToInApp = { showInAppWebShop = true }
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Paket Satın Al", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

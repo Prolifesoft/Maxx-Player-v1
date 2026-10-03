@@ -47,6 +47,7 @@ import com.example.model.DeviceManager
 import com.example.model.OdooIntegrationManager
 import com.example.model.db.AppDatabase
 import com.example.model.db.UserEntity
+import com.example.ui.components.openExternalBrowserSafely
 import com.example.ui.theme.RedPrimary
 import com.example.util.QrCodeGenerator
 import kotlinx.coroutines.Dispatchers
@@ -1556,6 +1557,7 @@ private fun DevicePortalRow(
     webPortalUrl: String,
     onCopy: (String, String) -> Unit
 ) {
+    val context = LocalContext.current
     var showInAppWebPortal by remember { mutableStateOf(false) }
     if (showInAppWebPortal) {
         com.example.ui.components.WebPortalDialog(
@@ -1570,7 +1572,13 @@ private fun DevicePortalRow(
             .height(30.dp)
             .background(Color(0xFF14171C), RoundedCornerShape(8.dp))
             .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-            .clickable { showInAppWebPortal = true }
+            .clickable {
+                openExternalBrowserSafely(
+                    context = context,
+                    url = webPortalUrl,
+                    onFallbackToInApp = { showInAppWebPortal = true }
+                )
+            }
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -1596,7 +1604,13 @@ private fun DevicePortalRow(
         }
 
         IconButton(
-            onClick = { showInAppWebPortal = true },
+            onClick = {
+                openExternalBrowserSafely(
+                    context = context,
+                    url = webPortalUrl,
+                    onFallbackToInApp = { showInAppWebPortal = true }
+                )
+            },
             modifier = Modifier
                 .size(26.dp)
                 .tvFocusBorder(RoundedCornerShape(4.dp))

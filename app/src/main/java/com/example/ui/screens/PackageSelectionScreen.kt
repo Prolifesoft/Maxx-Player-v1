@@ -52,7 +52,7 @@ fun PackageSelectionScreen(
 
     val deviceId = remember { DeviceManager.getDeviceId() }
     val deviceKey = remember { DeviceManager.getDeviceKey() }
-    val webPortalUrl = remember { DeviceManager.getWebPortalUrl() }
+    val webPortalUrl = remember { DeviceManager.getPackageShopUrl() }
     var showInAppWebPortal by remember { mutableStateOf(false) }
 
     if (showInAppWebPortal) {
@@ -208,7 +208,7 @@ fun PackageSelectionScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "maxxplayers.com",
+                                text = "maxxplayers.com/shop",
                                 color = Color(0xFF64B5F6),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
@@ -459,8 +459,8 @@ private fun WebOnlyNoticeCard() {
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "https://maxxplayers.com",
-                    fontSize = 12.sp,
+                    text = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3",
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF64B5F6)
                 )
@@ -481,16 +481,22 @@ private fun ActionButtons(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Button(
-            onClick = onOpenInAppPortal,
+            onClick = {
+                com.example.ui.components.openExternalBrowserSafely(
+                    context = context,
+                    url = webPortalUrl,
+                    onFallbackToInApp = onOpenInAppPortal
+                )
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(46.dp),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
         ) {
-            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Web Portalını Aç (maxxplayers.com)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text("Paket Satın Al (maxxplayers.com)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
 
         OutlinedButton(

@@ -235,12 +235,33 @@ object DeviceManager {
         return if (remaining < 0) 0 else remaining
     }
 
+    fun isCreditItem(name: String?): Boolean {
+        if (name.isNullOrBlank()) return false
+        val lower = name.lowercase(Locale.ROOT)
+        val lowerTr = name.lowercase(Locale.forLanguageTag("tr"))
+        val keywords = listOf("kredi", "kredı", "credit", "credits", "bakiye", "jeton", "coin", "token")
+        return keywords.any { lower.contains(it) || lowerTr.contains(it) }
+    }
+
     fun setActivePackageName(name: String?) {
+        if (isCreditItem(name)) {
+            prefs.edit().remove(KEY_PACKAGE_NAME).apply()
+            _activePackageNameState.value = if (isProPurchased()) "PRO Paket" else if (isTrialActive()) "15 Günlük Deneme" else "Süresi Dolmuş Paket"
+            return
+        }
         prefs.edit().putString(KEY_PACKAGE_NAME, name).apply()
         _activePackageNameState.value = name ?: (if (isProPurchased()) "PRO Paket" else if (isTrialActive()) "15 Günlük Deneme" else "Süresi Dolmuş Paket")
     }
 
-    fun getActivePackageName(): String? = if (::prefs.isInitialized) prefs.getString(KEY_PACKAGE_NAME, null) else null
+    fun getActivePackageName(): String? {
+        if (!::prefs.isInitialized) return null
+        val stored = prefs.getString(KEY_PACKAGE_NAME, null)
+        if (stored != null && isCreditItem(stored)) {
+            prefs.edit().remove(KEY_PACKAGE_NAME).apply()
+            return null
+        }
+        return stored
+    }
 
     fun getPackageExpireDate(): String? = if (::prefs.isInitialized) prefs.getString(KEY_PACKAGE_EXPIRE_DATE, null) else null
 
@@ -294,7 +315,11 @@ object DeviceManager {
     ) {
         val editor = prefs.edit()
         if (!packageName.isNullOrBlank()) {
-            editor.putString(KEY_PACKAGE_NAME, packageName.trim())
+            if (!isCreditItem(packageName)) {
+                editor.putString(KEY_PACKAGE_NAME, packageName.trim())
+            } else {
+                editor.remove(KEY_PACKAGE_NAME)
+            }
         }
         if (!packageType.isNullOrBlank()) {
             editor.putString(KEY_PACKAGE_TYPE, packageType.trim())
@@ -440,8 +465,9 @@ object DeviceManager {
     }
 
     private const val DEFAULT_ODOO_SERVER = "https://maxxplayers.com"
-    private const val WEB_PORTAL_URL = "https://maxxplayers.com/my/maxx"
-    private const val MAGAZA_URL = "https://maxxplayers.com/magaza"
+    private const val PACKAGE_SHOP_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
+    private const val WEB_PORTAL_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
+    private const val MAGAZA_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
 
     fun getOdooServerUrl(): String {
         val stored = prefs.getString(KEY_ODOO_SERVER, null)
@@ -456,15 +482,16 @@ object DeviceManager {
         prefs.edit().putString(KEY_ODOO_SERVER, url).apply()
     }
 
-    fun getMagazaUrl(): String = MAGAZA_URL
-    fun getQrUrl(): String = MAGAZA_URL
+    fun getPackageShopUrl(): String = PACKAGE_SHOP_URL
+    fun getMagazaUrl(): String = PACKAGE_SHOP_URL
+    fun getQrUrl(): String = PACKAGE_SHOP_URL
 
     fun getMyDevicesUrl(): String {
         val server = getOdooServerUrl().trimEnd('/')
         return "$server/my/devices"
     }
 
-    fun getWebPortalUrl(): String = WEB_PORTAL_URL
+    fun getWebPortalUrl(): String = PACKAGE_SHOP_URL
 
     fun setCurrentUser(id: String, name: String, email: String, photoUrl: String? = null) {
         prefs.edit()

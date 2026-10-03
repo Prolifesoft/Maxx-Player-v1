@@ -53,6 +53,23 @@ object OdooIntegrationManager {
     private val _portalCheckStatusText = MutableStateFlow<String?>(null)
     val portalCheckStatusText: StateFlow<String?> = _portalCheckStatusText.asStateFlow()
 
+    fun isCreditOrShopItem(name: String, url: String = "", username: String = ""): Boolean {
+        val lowerName = name.lowercase(java.util.Locale.ROOT)
+        val lowerNameTr = name.lowercase(java.util.Locale.forLanguageTag("tr"))
+        val lowerUrl = url.lowercase(java.util.Locale.ROOT)
+        val lowerUser = username.lowercase(java.util.Locale.ROOT)
+
+        val creditKeywords = listOf("kredi", "kredı", "credit", "credits", "bakiye", "jeton", "coin", "token")
+        if (creditKeywords.any { lowerName.contains(it) || lowerNameTr.contains(it) }) return true
+        if (creditKeywords.any { lowerUrl.contains(it) || lowerUser.contains(it) }) return true
+
+        if (lowerUrl.isNotBlank()) {
+            if (lowerUrl.contains("/shop") || lowerUrl.contains("/category") || lowerUrl.contains("/product") || lowerUrl.startsWith("/web")) return true
+            if (!lowerUrl.startsWith("http://") && !lowerUrl.startsWith("https://")) return true
+        }
+        return false
+    }
+
     fun parseAndSyncPackageFromOdoo(json: JSONObject) {
         try {
             val candidates = mutableListOf<JSONObject>()
@@ -100,7 +117,7 @@ object OdooIntegrationManager {
                                     obj.optString("subscription_name",
                                         obj.optString("product_name",
                                             obj.optString("active_package", ""))))))).trim()
-                    if (name.isNotBlank() && name != "null" && !name.equals("false", ignoreCase = true)) {
+                    if (name.isNotBlank() && name != "null" && !name.equals("false", ignoreCase = true) && !isCreditOrShopItem(name)) {
                         extractedPackageName = name
                     }
                 }
@@ -109,7 +126,7 @@ object OdooIntegrationManager {
                     val type = obj.optString("package_type",
                         obj.optString("type",
                             obj.optString("tier", ""))).trim()
-                    if (type.isNotBlank() && type != "null" && !type.equals("false", ignoreCase = true)) {
+                    if (type.isNotBlank() && type != "null" && !type.equals("false", ignoreCase = true) && !isCreditOrShopItem(type)) {
                         extractedPackageType = type
                     }
                 }
@@ -493,6 +510,14 @@ object OdooIntegrationManager {
                 )
             }
 
+            // Clean up any invalid or credit playlists
+            db.iptvDao().deleteCreditAndInvalidPlaylists()
+            for (p in db.iptvDao().getAllPlaylistsSync()) {
+                if (isCreditOrShopItem(p.name, p.hostUrl, p.username)) {
+                    db.iptvDao().deletePlaylist(p)
+                }
+            }
+
             // 1. Fetch remote playlists from Odoo
             val fetchResult = fetchRemotePlaylistsFromOdoo(effectiveUserId)
             val localPlaylists = db.iptvDao().getPlaylistsForUserSync(effectiveUserId)
@@ -530,6 +555,9 @@ object OdooIntegrationManager {
                             db.iptvDao().insertPlaylist(updated)
                         }
                     }
+
+                    // Clean up any invalid or credit playlists again after insert
+                    db.iptvDao().deleteCreditAndInvalidPlaylists()
 
                     resultCount = odooPlaylists.size
                     DeviceManager.updateActivePlaylistCount(resultCount)
@@ -583,10 +611,9 @@ object OdooIntegrationManager {
                                                         item.optString("link", "")))))))))))).trim()
             if (hostUrl.isBlank()) return null
 
+            val name = item.optString("name", item.optString("title", item.optString("playlist_name", item.optString("package_name", "Maxx Player Listesi ${index + 1}")))).trim()
             var username = item.optString("username", item.optString("user", item.optString("account", ""))).trim()
             var password = item.optString("password", item.optString("pass", "")).trim()
-            val name = item.optString("name", item.optString("title", item.optString("playlist_name", item.optString("package_name", "Maxx Player Listesi ${index + 1}")))).trim()
-            val isM3u = item.optBoolean("isM3u", item.optBoolean("is_m3u", hostUrl.contains(".m3u", ignoreCase = true) || hostUrl.contains("type=m3u", ignoreCase = true)))
 
             // Extract credentials from URL query params if missing
             if (username.isBlank() && hostUrl.contains("username=")) {
@@ -597,6 +624,11 @@ object OdooIntegrationManager {
                 val passMatch = Regex("[?&]password=([^&]+)").find(hostUrl)
                 if (passMatch != null) password = passMatch.groupValues[1]
             }
+
+            val isM3u = item.optBoolean("isM3u", item.optBoolean("is_m3u", hostUrl.contains(".m3u", ignoreCase = true) || hostUrl.contains("type=m3u", ignoreCase = true)))
+
+            // Krediler ve mağaza web bağlantıları çalma listesi olarak eklenmemelidir
+            if (isCreditOrShopItem(name, hostUrl, username)) return null
 
             return OdooPlaylistPayload(
                 name = if (name.isNotBlank()) name else "Maxx Player Listesi ${index + 1}",
@@ -620,8 +652,8 @@ object OdooIntegrationManager {
 
         if (jsonObjOrArray is JSONObject) {
             val arraysToCheck = listOf(
-                "playlists", "playlist", "data", "items", "list", "lines", "channels",
-                "devices", "my_devices", "device_list", "device_lines", "subscriptions", "packages"
+                "playlists", "playlist", "data", "lines", "channels",
+                "devices", "my_devices", "device_list", "device_lines"
             )
             for (key in arraysToCheck) {
                 val arr = jsonObjOrArray.optJSONArray(key)
