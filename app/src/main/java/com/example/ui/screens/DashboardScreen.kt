@@ -144,8 +144,12 @@ fun DashboardScreen(
             } catch (e: Exception) {}
         }
         while (true) {
-            kotlinx.coroutines.delay(25000)
+            kotlinx.coroutines.delay(120_000) // Every 2 minutes instead of 25 seconds
             try {
+                // Do not interrupt network bandwidth or disk I/O while playing movies or live channels
+                if (com.example.model.PlayerRepository.currentlyPlayingItem != null) {
+                    continue
+                }
                 val targetUserId = com.example.model.DeviceManager.getCurrentUserId()
                     ?: com.example.model.DeviceManager.getCurrentUserEmail()
                     ?: com.example.model.DeviceManager.getDeviceId()

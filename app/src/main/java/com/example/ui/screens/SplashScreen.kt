@@ -127,21 +127,34 @@ fun SplashScreen(
         }
     }
 
-    val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
-    val playIntro = remember {
-        INTRO_ENABLED && (!INTRO_ONLY_FIRST_LAUNCH || !prefs.getBoolean("intro_seen", false))
-    }
-    var introFailed by remember { mutableStateOf(!playIntro) }
-
-    val introUri = remember {
-        android.net.Uri.parse("android.resource://" + context.packageName + "/" + R.raw.intro3)
-    }
+    val playIntro = INTRO_ENABLED
+    var introFailed by remember { mutableStateOf(false) }
 
     val introPlayer = remember(playIntro) {
         if (!playIntro) null else {
             try {
+                // Pre-extract or verify local cache file for maximum compatibility across emulators and devices
+                val cacheFile = java.io.File(context.cacheDir, "intro_cached.mp4")
+                try {
+                    if (!cacheFile.exists() || cacheFile.length() == 0L) {
+                        context.resources.openRawResource(R.raw.intro3).use { input ->
+                            java.io.FileOutputStream(cacheFile).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("SplashScreen", "Could not copy raw resource to cache", e)
+                }
+
+                val mediaUri = if (cacheFile.exists() && cacheFile.length() > 0L) {
+                    android.net.Uri.fromFile(cacheFile)
+                } else {
+                    RawResourceDataSource.buildRawResourceUri(R.raw.intro3)
+                }
+
                 ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(introUri))
+                    setMediaItem(MediaItem.fromUri(mediaUri))
                     repeatMode = Player.REPEAT_MODE_OFF
                     playWhenReady = true
                     prepare()
@@ -157,15 +170,12 @@ fun SplashScreen(
     DisposableEffect(introPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) {
-                    if (INTRO_ONLY_FIRST_LAUNCH) {
-                        prefs.edit().putBoolean("intro_seen", true).apply()
-                    }
+                if (state == Player.STATE_ENDED) {
+                    navigateNext()
                 }
-                if (state == Player.STATE_ENDED) navigateNext()
             }
             override fun onPlayerError(error: PlaybackException) {
-                android.util.Log.e("SplashScreen", "Intro playback error", error)
+                android.util.Log.e("SplashScreen", "Intro playback error, navigating next", error)
                 introFailed = true
                 navigateNext()
             }
@@ -210,14 +220,19 @@ fun SplashScreen(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        player = introPlayer
+                        this.player = introPlayer
                         useController = false
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                         layoutParams = android.view.ViewGroup.LayoutParams(
                             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                             android.view.ViewGroup.LayoutParams.MATCH_PARENT
                         )
+                    }
+                },
+                update = { pv ->
+                    if (pv.player != introPlayer) {
+                        pv.player = introPlayer
                     }
                 }
             )

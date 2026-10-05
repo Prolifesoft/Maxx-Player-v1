@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.*
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -89,6 +90,7 @@ import com.example.ui.screens.player.PlayerSettingsSheet
 import com.example.ui.screens.player.PlayerSidePanel
 import com.example.util.isTv
 import androidx.activity.ComponentActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -152,7 +154,9 @@ fun PlayerScreen(
         }
     }
 
-    fun saveItemProgress(item: M3uItem?, rawPosMs: Long, rawDurMs: Long) {
+    var lastDbSaveTimestamp by remember { mutableLongStateOf(0L) }
+
+    fun saveItemProgress(item: M3uItem?, rawPosMs: Long, rawDurMs: Long, forceDb: Boolean = false) {
         if (showResumePrompt) return
         if (item == null || item.url.isBlank()) return
         if (item.type != ItemType.MOVIE && item.type != ItemType.SERIES) return
@@ -162,23 +166,27 @@ fun PlayerScreen(
         val safeDurMs = if (rawDurMs > 0L) rawDurMs else (durationMs.takeIf { it > 0L } ?: (effectivePosMs + 3_600_000L))
         PlayerRepository.lastPositions[item.url] = effectivePosMs to safeDurMs
 
-        val progress = PlaybackProgressEntity(
-            url = item.url,
-            title = if (item.type == ItemType.SERIES) {
-                (item.seriesName ?: "") + "$epPrefix${item.episode ?: "?"}: ${item.title}"
-            } else {
-                item.title
-            },
-            logo = item.logo,
-            type = item.type.name,
-            positionMs = effectivePosMs,
-            durationMs = safeDurMs,
-            timestamp = System.currentTimeMillis()
-        )
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                db.iptvDao().insertPlaybackProgress(progress)
-            } catch (_: Exception) {}
+        val now = System.currentTimeMillis()
+        if (forceDb || now - lastDbSaveTimestamp >= 10_000L) {
+            lastDbSaveTimestamp = now
+            val progress = PlaybackProgressEntity(
+                url = item.url,
+                title = if (item.type == ItemType.SERIES) {
+                    (item.seriesName ?: "") + "$epPrefix${item.episode ?: "?"}: ${item.title}"
+                } else {
+                    item.title
+                },
+                logo = item.logo,
+                type = item.type.name,
+                positionMs = effectivePosMs,
+                durationMs = safeDurMs,
+                timestamp = now
+            )
+            scope.launch(Dispatchers.IO) {
+                try {
+                    db.iptvDao().insertPlaybackProgress(progress)
+                } catch (_: Exception) {}
+            }
         }
     }
     var epgNow by remember { mutableStateOf<EpgProgram?>(null) }
@@ -286,7 +294,14 @@ fun PlayerScreen(
             .setAllowCrossProtocolRedirects(true)
             .setKeepPostFor302Redirects(true)
             .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(20000)
+            .setReadTimeoutMs(15000)
+            .setDefaultRequestProperties(
+                mapOf(
+                    "Connection" to "keep-alive",
+                    "Accept" to "*/*",
+                    "Accept-Encoding" to "identity"
+                )
+            )
 
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
 
@@ -299,12 +314,29 @@ fun PlayerScreen(
             )
             .setTsExtractorTimestampSearchBytes(1500 * 188)
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 15_000,
+                /* maxBufferMs = */ 60_000,
+                /* bufferForPlaybackMs = */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 4_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .setBackBuffer(
+                /* backBufferDurationMs = */ 10_000,
+                /* retainBackBufferFromKeyframe = */ false
+            )
+            .setTargetBufferBytes(32 * 1024 * 1024)
+            .build()
+
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
         ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(trackSelector)
+            .setLoadControl(loadControl)
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
                 setAudioAttributes(audioAttributes, true)
@@ -412,6 +444,7 @@ fun PlayerScreen(
     DisposableEffect(exoPlayer) {
         var retryCount = 0
         var liveRetryCount = 0
+        var vodRetryCount = 0
         var currentAttemptMimeType: String? = null
 
         val listener = object : Player.Listener {
@@ -419,6 +452,7 @@ fun PlayerScreen(
                 super.onMediaItemTransition(mediaItem, reason)
                 retryCount = 0
                 liveRetryCount = 0
+                vodRetryCount = 0
                 currentAttemptMimeType = null
 
                 // D.5: Find item using mediaId (= url) from activePlaylist, NOT by index
@@ -459,14 +493,20 @@ fun PlayerScreen(
                 val current = playingItem
                 val isLive = current?.type == ItemType.LIVE
 
-                // FAZ E: BehindLiveWindow or Network/IO auto-retry up to 3 times
+                // FAZ E: BehindLiveWindow or Network/IO auto-retry up to 5 times
                 val isBehindLive = error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
                 val isNetworkOrIo = error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                         error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
                         error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
-                        error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
+                        error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                        error.errorCode == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE ||
+                        error.errorCode == PlaybackException.ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED ||
+                        error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT ||
+                        error.errorCode == PlaybackException.ERROR_CODE_REMOTE_ERROR ||
+                        error.cause is java.io.IOException ||
+                        error.cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException
 
-                if (isLive && (isBehindLive || isNetworkOrIo) && liveRetryCount < 3) {
+                if (isLive && (isBehindLive || isNetworkOrIo) && liveRetryCount < 5) {
                     liveRetryCount++
                     scope.launch {
                         delay(2000)
@@ -475,6 +515,25 @@ fun PlayerScreen(
                         }
                         exoPlayer.prepare()
                         exoPlayer.playWhenReady = true
+                    }
+                    return
+                }
+
+                // VOD / Movie / Series auto-retry on network disconnect, server timeout or socket drop
+                if (!isLive && (isNetworkOrIo || isBehindLive) && vodRetryCount < 10) {
+                    vodRetryCount++
+                    val currentPos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                    val safePos = (currentPos - 2000L).coerceAtLeast(0L)
+                    scope.launch {
+                        delay(1200)
+                        try {
+                            if (current != null) {
+                                val retryItem = createMediaItem(current)
+                                exoPlayer.setMediaItem(retryItem, safePos)
+                                exoPlayer.prepare()
+                                exoPlayer.playWhenReady = true
+                            }
+                        } catch (_: Exception) {}
                     }
                     return
                 }
@@ -520,6 +579,7 @@ fun PlayerScreen(
                 durationMs = exoPlayer.duration.coerceAtLeast(0L)
                 if (playbackState == Player.STATE_READY) {
                     liveRetryCount = 0
+                    vodRetryCount = 0
                     val targetResume = pendingResumePositionMs
                     if (targetResume > 0L) {
                         pendingResumePositionMs = 0L
@@ -547,13 +607,22 @@ fun PlayerScreen(
 
     // FAZ E: Lifecycle ON_PAUSE & ON_RESUME handling
     val lifecycleOwner = LocalLifecycleOwner.current
+    val windowActivity = (context as? android.app.Activity) ?: context.findActivity()
+
+    DisposableEffect(windowActivity) {
+        windowActivity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            windowActivity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     DisposableEffect(lifecycleOwner, exoPlayer) {
         var wasPlaying = false
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
                     wasPlaying = exoPlayer.isPlaying
-                    saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+                    saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
                     exoPlayer.pause()
                 }
                 Lifecycle.Event.ON_RESUME -> {
@@ -570,12 +639,64 @@ fun PlayerScreen(
         }
     }
 
-    // Position tracking
+    // STALL WATCHDOG: Automatically recovers when video buffering hangs or freezes (e.g. 30-min server disconnect)
+    LaunchedEffect(playingItem?.url, isBuffering) {
+        val current = playingItem
+        if (current != null && (current.type == ItemType.MOVIE || current.type == ItemType.SERIES)) {
+            if (isBuffering && exoPlayer.playWhenReady) {
+                // Wait up to 7 seconds for standard buffer refill
+                delay(7000)
+                // If it is STILL buffering after 7s while playWhenReady is true, stream socket dropped
+                if (isBuffering && exoPlayer.playWhenReady && !exoPlayer.isPlaying) {
+                    val currentPos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                    val safePos = (currentPos - 2000L).coerceAtLeast(0L)
+                    try {
+                        val retryItem = createMediaItem(current)
+                        exoPlayer.setMediaItem(retryItem, safePos)
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    // Position tracking & freeze watchdog
     LaunchedEffect(playingItem?.url) {
+        var lastTrackedPos = -1L
+        var frozenTicks = 0
         while (true) {
             currentPositionMs = exoPlayer.currentPosition
             durationMs = exoPlayer.duration.coerceAtLeast(0L)
             isPlaying = exoPlayer.isPlaying
+
+            val current = playingItem
+            if (current != null && (current.type == ItemType.MOVIE || current.type == ItemType.SERIES)) {
+                // Detect playback freeze when playing without control overlay or resume prompt
+                if (exoPlayer.playWhenReady && !showResumePrompt && currentPositionMs > 3000L && (durationMs <= 0L || currentPositionMs < durationMs - 5000L)) {
+                    if (currentPositionMs == lastTrackedPos && !isBuffering) {
+                        frozenTicks++
+                        // 16 ticks * 500ms = 8 seconds of frozen playback -> auto-reconnect from current position
+                        if (frozenTicks >= 16) {
+                            frozenTicks = 0
+                            val safePos = (currentPositionMs - 2000L).coerceAtLeast(0L)
+                            try {
+                                val retryItem = createMediaItem(current)
+                                exoPlayer.setMediaItem(retryItem, safePos)
+                                exoPlayer.prepare()
+                                exoPlayer.playWhenReady = true
+                            } catch (_: Exception) {}
+                        }
+                    } else {
+                        frozenTicks = 0
+                        lastTrackedPos = currentPositionMs
+                    }
+                } else {
+                    frozenTicks = 0
+                    lastTrackedPos = currentPositionMs
+                }
+            }
+
             delay(500)
         }
     }
@@ -634,7 +755,7 @@ fun PlayerScreen(
     DisposableEffect(Unit) {
         onDispose {
             try {
-                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
             } catch (_: Exception) {}
             try {
                 exoPlayer.stop()
@@ -647,7 +768,7 @@ fun PlayerScreen(
 
     val exitPlayer: () -> Unit = {
         try {
-            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
+            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
         } catch (_: Exception) {}
         onBack()
     }
@@ -992,6 +1113,7 @@ fun PlayerScreen(
                         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                         setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                         resizeMode = currentResizeMode
+                        keepScreenOn = true
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -1001,6 +1123,7 @@ fun PlayerScreen(
                 update = { pv ->
                     pv.player = exoPlayer
                     pv.resizeMode = currentResizeMode
+                    pv.keepScreenOn = true
                 },
                 modifier = Modifier.fillMaxSize()
             )
