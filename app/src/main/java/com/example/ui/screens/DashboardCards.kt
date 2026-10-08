@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -22,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -39,6 +42,7 @@ import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.example.R
 import com.example.parser.M3uItem
+import com.example.ui.theme.RedPrimary
 import java.util.Locale
 
 @Composable
@@ -91,11 +95,18 @@ fun HeroBanner(
     }
 
     val activeBackdropUrl = backdropList.getOrNull(currentBackdropIndex) ?: item.logo
+    var isFocused by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(260.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier.border(3.5.dp, RedPrimary, RoundedCornerShape(12.dp))
+                else Modifier
+            )
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .background(Color(0xFF0F0F17))
     ) {
@@ -297,12 +308,21 @@ fun MovieCard(
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
+    var isFocused by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(10.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B202A))
+        border = if (isFocused) BorderStroke(3.dp, RedPrimary) else null,
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF262C3A) else Color(0xFF1B202A))
     ) {
         Column {
             Box(
@@ -474,13 +494,22 @@ fun ChannelCard(
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
+    var isFocused by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(10.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B202A))
+        border = if (isFocused) BorderStroke(3.dp, RedPrimary) else null,
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF262C3A) else Color(0xFF1B202A))
     ) {
         Column(
             modifier = Modifier
@@ -645,13 +674,22 @@ fun SeriesCard(
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
+    var isFocused by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(10.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B202A))
+        border = if (isFocused) BorderStroke(3.dp, RedPrimary) else null,
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF262C3A) else Color(0xFF1B202A))
     ) {
         Column {
             Box(
@@ -815,13 +853,23 @@ fun SeriesCard(
 fun ProgressCard(progress: com.example.model.db.PlaybackProgressEntity, onClick: () -> Unit) {
     val context = LocalContext.current
     var logoLoadFailed by remember(progress.logo) { mutableStateOf(false) }
+    var isFocused by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .width(160.dp)
             .height(90.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(8.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF080F19))
+        border = if (isFocused) BorderStroke(3.dp, RedPrimary) else null,
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF1B202A) else Color(0xFF080F19))
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (!progress.logo.isNullOrBlank() && !logoLoadFailed) {
@@ -879,13 +927,21 @@ fun ProgressCard(progress: com.example.model.db.PlaybackProgressEntity, onClick:
 
 @Composable
 fun MatchFixtureCard(fixture: MatchFixture, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .width(220.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(12.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E2E)),
-        border = BorderStroke(1.dp, if (fixture.isLive) Color(0xFFE50914) else Color(0xFF2E2E42))
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF28283E) else Color(0xFF1E1E2E)),
+        border = BorderStroke(if (isFocused) 3.dp else 1.dp, if (isFocused || fixture.isLive) RedPrimary else Color(0xFF2E2E42))
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -1044,13 +1100,21 @@ fun MatchFixtureCard(fixture: MatchFixture, onClick: () -> Unit) {
 
 @Composable
 fun MatchFixtureDetailedCard(fixture: MatchFixture, onWatchClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.03f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(12.dp))
+                else Modifier
+            )
             .clickable(onClick = onWatchClick),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B222D)),
-        border = BorderStroke(1.dp, if (fixture.isLive) Color(0xFFE50914) else Color(0xFF2C384A))
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF242E3D) else Color(0xFF1B222D)),
+        border = BorderStroke(if (isFocused) 3.dp else 1.dp, if (isFocused || fixture.isLive) RedPrimary else Color(0xFF2C384A))
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
             Row(
@@ -1251,13 +1315,21 @@ fun ImdbCard(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
+    var isFocused by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .width(150.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier
+                    .scale(1.05f)
+                    .border(3.dp, RedPrimary, RoundedCornerShape(12.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A28)),
-        border = BorderStroke(1.dp, Color(0xFF2A2A3E))
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF242436) else Color(0xFF1A1A28)),
+        border = BorderStroke(if (isFocused) 3.dp else 1.dp, if (isFocused) RedPrimary else Color(0xFF2A2A3E))
     ) {
         Column {
             Box(

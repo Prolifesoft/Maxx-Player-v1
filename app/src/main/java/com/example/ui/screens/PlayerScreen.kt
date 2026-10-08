@@ -751,26 +751,47 @@ fun PlayerScreen(
         }
     }
 
+    var hasExitedPlayer by remember { mutableStateOf(false) }
+
     // Release player on unmount and save last position
     DisposableEffect(Unit) {
         onDispose {
+            if (!hasExitedPlayer) {
+                try {
+                    saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
+                } catch (_: Exception) {}
+            }
+            PlayerRepository.currentlyPlayingItem = null
             try {
-                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
-            } catch (_: Exception) {}
-            try {
+                exoPlayer.playWhenReady = false
                 exoPlayer.stop()
-                exoPlayer.release()
+                exoPlayer.clearMediaItems()
             } catch (_: Exception) {}
+            // Post release onto next main looper turn so exiting to Dashboard is instant and does NOT freeze UI thread!
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    exoPlayer.release()
+                } catch (_: Exception) {}
+            }
         }
     }
 
     val isTvDevice = remember(context) { isTv(context) }
 
     val exitPlayer: () -> Unit = {
-        try {
-            saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
-        } catch (_: Exception) {}
-        onBack()
+        if (!hasExitedPlayer) {
+            hasExitedPlayer = true
+            try {
+                saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration, forceDb = true)
+            } catch (_: Exception) {}
+            try {
+                exoPlayer.playWhenReady = false
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+            } catch (_: Exception) {}
+            PlayerRepository.currentlyPlayingItem = null
+            onBack()
+        }
     }
 
     // Back button handling hierarchy: dialog -> panel -> settings -> controls (TV) -> exit player
@@ -1124,6 +1145,12 @@ fun PlayerScreen(
                     pv.player = exoPlayer
                     pv.resizeMode = currentResizeMode
                     pv.keepScreenOn = true
+                },
+                onReset = { pv ->
+                    pv.player = null
+                },
+                onRelease = { pv ->
+                    pv.player = null
                 },
                 modifier = Modifier.fillMaxSize()
             )

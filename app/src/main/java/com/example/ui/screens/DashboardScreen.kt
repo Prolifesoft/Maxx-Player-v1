@@ -6,7 +6,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.auth.findActivity
 import com.example.model.PlaylistRepository
+import com.example.ui.theme.RedPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,7 +89,11 @@ fun DashboardScreen(
     val allItems by PlaylistRepository.playlist.collectAsState()
     val hiddenCategories by com.example.model.CategoryManager.hiddenCategories.collectAsState()
     val visibleItems = remember(allItems, hiddenCategories) {
-        allItems.filter { !hiddenCategories.contains(it.group) }
+        if (hiddenCategories.isEmpty()) {
+            allItems
+        } else {
+            allItems.filter { !hiddenCategories.contains(it.group) }
+        }
     }
     val favoriteUrls by com.example.model.FavoritesManager.favoriteUrls.collectAsState()
     val db = remember { com.example.model.db.AppDatabase.getDatabase(context) }
@@ -339,7 +348,11 @@ fun DashboardScreen(
         }
     }
 
-    val displayGroups = remember(visibleItems, currentType, selectedTabIndex, favoriteUrls) {
+    val knownGroupsMap by PlaylistRepository.knownGroups.collectAsState()
+    val categoryLoadingStates by PlaylistRepository.categoryLoadingStates.collectAsState()
+    val typeLoadingStates by PlaylistRepository.typeLoadingStates.collectAsState()
+
+    val displayGroups = remember(visibleItems, currentType, selectedTabIndex, favoriteUrls, knownGroupsMap) {
         when {
             currentType != null -> PlaylistRepository.getGroups(currentType)
             selectedTabIndex == 4 -> visibleItems
@@ -359,6 +372,29 @@ fun DashboardScreen(
             com.example.model.PlayerRepository.lastDashboardGroupByTab[selectedTabIndex] = grp
         } else {
             com.example.model.PlayerRepository.lastDashboardGroupByTab.remove(selectedTabIndex)
+        }
+    }
+
+    // On-demand fetch for Xtream Codes when user switches to Live, Movies, Series, or selects a Category:
+    // "canlıya tıkladıgımda canlıları flımlerı tıkkladıgımda flımlerı dızılerı tıkladıgımda dızılerı dırek kokten ceksın"
+    LaunchedEffect(selectedTabIndex, selectedGroup, currentType) {
+        if (selectedTabIndex in 1..3 && currentType != null) {
+            if (selectedGroup != null) {
+                PlaylistRepository.ensureCategoryLoaded(context, selectedGroup, currentType)
+            } else {
+                PlaylistRepository.ensureTypeLoaded(context, currentType)
+            }
+        }
+    }
+
+    // Resolves series episodes on-demand when user clicks a series
+    LaunchedEffect(selectedSeries) {
+        val s = selectedSeries?.firstOrNull()
+        if (s != null && s.url.contains("series_placeholder")) {
+            val episodes = PlaylistRepository.getSeriesEpisodes(context, s)
+            if (episodes.isNotEmpty() && episodes.first().url != s.url) {
+                selectedSeries = episodes
+            }
         }
     }
     var selectedFavoriteFilter by remember(selectedTabIndex) {
@@ -434,12 +470,12 @@ fun DashboardScreen(
     val groupCounts = remember(visibleItems, currentType, selectedTabIndex, favoriteUrls) {
         when {
             currentType != null -> {
-                visibleItems.filter { it.type == currentType }
+                visibleItems.asSequence().filter { it.type == currentType }
                     .groupingBy { it.group ?: "" }
                     .eachCount()
             }
             selectedTabIndex == 4 -> {
-                visibleItems.filter { favoriteUrls.contains(it.url) }
+                visibleItems.asSequence().filter { favoriteUrls.contains(it.url) }
                     .groupingBy { it.group ?: "" }
                     .eachCount()
             }
@@ -641,16 +677,25 @@ fun DashboardScreen(
                 ) {
                     tabs.forEachIndexed { index, title ->
                         val isSelected = selectedTabIndex == index
+                        var isItemFocused by remember { mutableStateOf(false) }
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .onFocusChanged { isItemFocused = it.isFocused }
+                                .border(
+                                    width = if (isItemFocused) 3.dp else if (isSelected) 1.5.dp else 0.dp,
+                                    color = if (isItemFocused || isSelected) RedPrimary else Color.Transparent,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
                                 .clickable {
                                     selectedTabIndex = index
                                     selectedGroup = null
                                     searchQuery = ""
                                 }
                                 .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color(0xFF1C2230).copy(alpha = 0.5f),
+                                    if (isItemFocused) RedPrimary.copy(alpha = 0.28f)
+                                    else if (isSelected) RedPrimary.copy(alpha = 0.18f)
+                                    else Color(0xFF1C2230).copy(alpha = 0.5f),
                                     RoundedCornerShape(10.dp)
                                 )
                                 .padding(vertical = 6.dp, horizontal = 2.dp),
@@ -663,15 +708,15 @@ fun DashboardScreen(
                                 Icon(
                                     tabIcons[index],
                                     contentDescription = title,
-                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFB0BEC5),
+                                    tint = if (isSelected || isItemFocused) RedPrimary else Color(0xFFB0BEC5),
                                     modifier = Modifier.size(22.dp)
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(
                                     text = title,
                                     fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFCFD8DC),
+                                    fontWeight = if (isSelected || isItemFocused) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    color = if (isSelected || isItemFocused) Color.White else Color(0xFFCFD8DC),
                                     maxLines = 1,
                                     softWrap = false,
                                     overflow = TextOverflow.Ellipsis
@@ -680,9 +725,9 @@ fun DashboardScreen(
                                 Box(
                                     modifier = Modifier
                                         .height(2.5.dp)
-                                        .width(if (isSelected) 28.dp else 0.dp)
+                                        .width(if (isSelected || isItemFocused) 28.dp else 0.dp)
                                         .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            if (isSelected || isItemFocused) RedPrimary else Color.Transparent,
                                             RoundedCornerShape(1.5.dp)
                                         )
                                 )
@@ -749,10 +794,17 @@ fun DashboardScreen(
                     ) {
                         tabs.forEachIndexed { index, title ->
                             val isSelected = selectedTabIndex == index
+                            var isItemFocused by remember { mutableStateOf(false) }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
+                                    .onFocusChanged { isItemFocused = it.isFocused }
+                                    .border(
+                                        width = if (isItemFocused) 3.dp else if (isSelected) 1.5.dp else 0.dp,
+                                        color = if (isItemFocused || isSelected) RedPrimary else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
                                     .clickable {
                                         selectedTabIndex = index
                                         selectedGroup = null
@@ -760,7 +812,9 @@ fun DashboardScreen(
                                     }
                                     .padding(horizontal = 4.dp, vertical = 4.dp)
                                     .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+                                        if (isItemFocused) RedPrimary.copy(alpha = 0.28f)
+                                        else if (isSelected) RedPrimary.copy(alpha = 0.16f)
+                                        else Color.Transparent,
                                         RoundedCornerShape(8.dp)
                                     ),
                                 contentAlignment = Alignment.Center
@@ -772,15 +826,15 @@ fun DashboardScreen(
                                     Icon(
                                         tabIcons[index],
                                         contentDescription = title,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFB0BEC5),
+                                        tint = if (isSelected || isItemFocused) RedPrimary else Color(0xFFB0BEC5),
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = title,
                                         fontSize = 13.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFCFD8DC),
+                                        fontWeight = if (isSelected || isItemFocused) FontWeight.ExtraBold else FontWeight.Medium,
+                                        color = if (isSelected || isItemFocused) Color.White else Color(0xFFCFD8DC),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -1034,16 +1088,61 @@ fun DashboardScreen(
                 }
             }
 
+            val isBgLoading by PlaylistRepository.isLoading.collectAsState()
+            val bgProgress by PlaylistRepository.loadingProgress.collectAsState()
+            val bgDetail by PlaylistRepository.loadingDetail.collectAsState()
+            if (isBgLoading && allItems.isNotEmpty()) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Kanallar yükleniyor: ${allItems.size} kanal aktif",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = if (bgDetail.isNotBlank()) bgDetail else "%$bgProgress",
+                            fontSize = 11.sp,
+                            color = Color.LightGray
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    LinearProgressIndicator(
+                        progress = bgProgress / 100f,
+                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color(0xFF222222)
+                    )
+                }
+            }
+
             // Screen Content by Tab
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (selectedTabIndex) {
                     0 -> {
                         // TAB 0: HOME / ANASAYFA
                         val heroItem = remember(visibleItems) { visibleItems.firstOrNull { it.type == ItemType.MOVIE && !it.logo.isNullOrEmpty() } ?: visibleItems.firstOrNull() }
-                        val popularMovies = remember(visibleItems) { visibleItems.filter { it.type == ItemType.MOVIE }.take(15) }
-                        val liveChannels = remember(visibleItems) { visibleItems.filter { it.type == ItemType.LIVE }.take(15) }
-                        val seriesItems = remember(visibleItems) { visibleItems.filter { it.type == ItemType.SERIES } }
-                        val seriesGroups = remember(seriesItems) { seriesItems.groupBy { it.seriesName ?: it.title } }
+                        val popularMovies = remember(visibleItems) { visibleItems.asSequence().filter { it.type == ItemType.MOVIE }.take(15).toList() }
+                        val liveChannels = remember(visibleItems) { visibleItems.asSequence().filter { it.type == ItemType.LIVE }.take(15).toList() }
+                        val seriesGroups = remember(visibleItems) {
+                            val map = LinkedHashMap<String, MutableList<M3uItem>>()
+                            for (item in visibleItems) {
+                                if (item.type == ItemType.SERIES) {
+                                    val sName = item.seriesName ?: item.title
+                                    val existing = map[sName]
+                                    if (existing != null) {
+                                        existing.add(item)
+                                    } else if (map.size < 15) {
+                                        map[sName] = mutableListOf(item)
+                                    }
+                                }
+                            }
+                            map
+                        }
 
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
@@ -1425,6 +1524,8 @@ fun DashboardScreen(
                                                             if (com.example.model.ParentalControlManager.isItemLocked(ep)) {
                                                                 playlistForUnlock = episodes
                                                                 itemToUnlock = ep
+                                                            } else if (ep.url.contains("series_placeholder")) {
+                                                                selectedSeries = episodes
                                                             } else {
                                                                 playWithPlaylist(ep, episodes)
                                                             }
@@ -1493,127 +1594,145 @@ fun DashboardScreen(
 
                     1 -> {
                         // TAB 1: LIVE CHANNELS (CANLI)
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 120.dp),
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(currentTabItems) { channel ->
-                                ChannelCard(item = channel, onClick = {
-                                    if (com.example.model.ParentalControlManager.isItemLocked(channel)) {
-                                        itemToUnlock = channel
+                        if (currentTabItems.isEmpty()) {
+                            val isCategoryLoading = currentType != null && selectedGroup != null && categoryLoadingStates.contains(currentType to selectedGroup)
+                            val isTypeLoading = currentType != null && typeLoadingStates[currentType] == true
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(24.dp)
+                                ) {
+                                    if (isCategoryLoading || isTypeLoading) {
+                                        CircularProgressIndicator(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = if (selectedGroup != null) "$selectedGroup kanalları yükleniyor..." else "Canlı kanallar yükleniyor...",
+                                            color = Color.White,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
                                     } else {
-                                        playWithPlaylist(channel, currentTabItems)
+                                        Icon(
+                                            Icons.Default.LiveTv,
+                                            contentDescription = null,
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(56.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = if (searchQuery.isNotEmpty()) "Arama kriterine uygun kanal bulunamadı" else "Kanal bulunamadı",
+                                            color = Color.Gray,
+                                            fontSize = 14.sp
+                                        )
                                     }
-                                })
+                                }
+                            }
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 120.dp),
+                                contentPadding = PaddingValues(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(currentTabItems) { channel ->
+                                    ChannelCard(item = channel, onClick = {
+                                        if (com.example.model.ParentalControlManager.isItemLocked(channel)) {
+                                            itemToUnlock = channel
+                                        } else {
+                                            playWithPlaylist(channel, currentTabItems)
+                                        }
+                                    })
+                                }
                             }
                         }
                     }
 
                     2 -> {
                         // TAB 2: MOVIES (FLİM)
-                        val uncategorizedText = stringResource(R.string.uncategorized)
-                        val itemsByGroup = remember(currentTabItems, uncategorizedText) { currentTabItems.groupBy { it.group ?: uncategorizedText } }
-
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 32.dp)
-                        ) {
-                            if (currentTabItems.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
-                                val heroMovie = currentTabItems.randomOrNull() ?: currentTabItems.first()
-                                item {
-                                    HeroBanner(item = heroMovie, onClick = {
-                                        if (com.example.model.ParentalControlManager.isItemLocked(heroMovie)) {
-                                            itemToUnlock = heroMovie
-                                        } else {
-                                            playWithPlaylist(heroMovie, currentTabItems)
-                                        }
-                                    })
-                                }
-                            }
-
-                            if (recentMovies.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
-                                item {
-                                    Text(
-                                        text = stringResource(R.string.continue_watching),
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp, end = 16.dp)
-                                    )
-                                    LazyRow(
-                                        contentPadding = PaddingValues(horizontal = 16.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        items(recentMovies) { progress ->
-                                            ProgressCard(progress = progress, onClick = {
-                                                val matchedItem = allItems.find { it.url == progress.url }
-                                                if (matchedItem != null) {
-                                                    if (com.example.model.ParentalControlManager.isItemLocked(matchedItem)) {
-                                                        itemToUnlock = matchedItem
-                                                    } else {
-                                                        playWithPlaylist(matchedItem, listOf(matchedItem))
-                                                    }
-                                                }
-                                            })
-                                        }
+                        if (currentTabItems.isEmpty()) {
+                            val isCategoryLoading = currentType != null && selectedGroup != null && categoryLoadingStates.contains(currentType to selectedGroup)
+                            val isTypeLoading = currentType != null && typeLoadingStates[currentType] == true
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(24.dp)
+                                ) {
+                                    if (isCategoryLoading || isTypeLoading) {
+                                        CircularProgressIndicator(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = if (selectedGroup != null) "$selectedGroup filmleri yükleniyor..." else "Filmler yükleniyor...",
+                                            color = Color.White,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Movie,
+                                            contentDescription = null,
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(56.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = if (searchQuery.isNotEmpty()) "Arama kriterine uygun film bulunamadı" else "Film bulunamadı",
+                                            color = Color.Gray,
+                                            fontSize = 14.sp
+                                        )
                                     }
                                 }
                             }
+                        } else {
+                            val uncategorizedText = stringResource(R.string.uncategorized)
+                            val itemsByGroup = remember(currentTabItems, uncategorizedText) { currentTabItems.groupBy { it.group ?: uncategorizedText } }
 
-                            itemsByGroup.forEach { (groupName, groupItems) ->
-                                if (groupItems.isNotEmpty()) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 32.dp)
+                            ) {
+                                if (currentTabItems.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
+                                    val heroMovie = currentTabItems.randomOrNull() ?: currentTabItems.first()
+                                    item {
+                                        HeroBanner(item = heroMovie, onClick = {
+                                            if (com.example.model.ParentalControlManager.isItemLocked(heroMovie)) {
+                                                itemToUnlock = heroMovie
+                                            } else {
+                                                playWithPlaylist(heroMovie, currentTabItems)
+                                            }
+                                        })
+                                    }
+                                }
+
+                                if (recentMovies.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
                                     item {
                                         Text(
-                                            text = groupName.uppercase(),
+                                            text = stringResource(R.string.continue_watching),
                                             color = Color.White,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp, end = 16.dp)
+                                            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp, end = 16.dp)
                                         )
                                         LazyRow(
                                             contentPadding = PaddingValues(horizontal = 16.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            items(groupItems) { movie ->
-                                                MovieCard(item = movie, onClick = {
-                                                    if (com.example.model.ParentalControlManager.isItemLocked(movie)) {
-                                                        itemToUnlock = movie
-                                                    } else {
-                                                        playWithPlaylist(movie, groupItems)
-                                                    }
-                                                })
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    3 -> {
-                        // TAB 3: SERIES (DİZİ)
-                        val seriesGroups = remember(currentTabItems) { currentTabItems.groupBy { it.seriesName ?: it.title } }
-
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 110.dp),
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            if (recentSeries.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Column {
-                                        Text(
-                                            text = stringResource(R.string.continue_watching),
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(bottom = 8.dp)
-                                        )
-                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            items(recentSeries) { progress ->
+                                            items(recentMovies) { progress ->
                                                 ProgressCard(progress = progress, onClick = {
                                                     val matchedItem = allItems.find { it.url == progress.url }
                                                     if (matchedItem != null) {
@@ -1626,35 +1745,148 @@ fun DashboardScreen(
                                                 })
                                             }
                                         }
-                                        Spacer(modifier = Modifier.height(16.dp))
+                                    }
+                                }
+
+                                itemsByGroup.forEach { (groupName, groupItems) ->
+                                    if (groupItems.isNotEmpty()) {
+                                        item {
+                                            Text(
+                                                text = groupName.uppercase(),
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp, end = 16.dp)
+                                            )
+                                            LazyRow(
+                                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                items(groupItems) { movie ->
+                                                    MovieCard(item = movie, onClick = {
+                                                        if (com.example.model.ParentalControlManager.isItemLocked(movie)) {
+                                                            itemToUnlock = movie
+                                                        } else {
+                                                            playWithPlaylist(movie, groupItems)
+                                                        }
+                                                    })
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        }
+                    }
 
-                            items(seriesGroups.keys.toList()) { seriesName ->
-                                val episodes = seriesGroups[seriesName] ?: emptyList()
-                                val posterItem = episodes.firstOrNull { !it.logo.isNullOrEmpty() } ?: episodes.first()
-                                SeriesCard(
-                                    seriesName = seriesName,
-                                    item = posterItem,
-                                    episodeCount = episodes.size,
-                                    episodes = episodes,
-                                    onPlayEpisode = { ep ->
-                                        if (com.example.model.ParentalControlManager.isItemLocked(ep)) {
-                                            playlistForUnlock = episodes
-                                            itemToUnlock = ep
-                                        } else {
-                                            playWithPlaylist(ep, episodes)
-                                        }
-                                    },
-                                    onClick = {
-                                        if (com.example.model.ParentalControlManager.isItemLocked(posterItem)) {
-                                            seriesToUnlock = episodes
-                                        } else {
-                                            selectedSeries = episodes
+                    3 -> {
+                        // TAB 3: SERIES (DİZİ)
+                        if (currentTabItems.isEmpty()) {
+                            val isCategoryLoading = currentType != null && selectedGroup != null && categoryLoadingStates.contains(currentType to selectedGroup)
+                            val isTypeLoading = currentType != null && typeLoadingStates[currentType] == true
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(24.dp)
+                                ) {
+                                    if (isCategoryLoading || isTypeLoading) {
+                                        CircularProgressIndicator(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = if (selectedGroup != null) "$selectedGroup dizileri yükleniyor..." else "Diziler yükleniyor...",
+                                            color = Color.White,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Tv,
+                                            contentDescription = null,
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(56.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = if (searchQuery.isNotEmpty()) "Arama kriterine uygun dizi bulunamadı" else "Dizi bulunamadı",
+                                            color = Color.Gray,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            val seriesGroups = remember(currentTabItems) { currentTabItems.groupBy { it.seriesName ?: it.title } }
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 110.dp),
+                                contentPadding = PaddingValues(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                if (recentSeries.isNotEmpty() && selectedGroup == null && searchQuery.isEmpty()) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Column {
+                                            Text(
+                                                text = stringResource(R.string.continue_watching),
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(bottom = 8.dp)
+                                            )
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                items(recentSeries) { progress ->
+                                                    ProgressCard(progress = progress, onClick = {
+                                                        val matchedItem = allItems.find { it.url == progress.url }
+                                                        if (matchedItem != null) {
+                                                            if (com.example.model.ParentalControlManager.isItemLocked(matchedItem)) {
+                                                                itemToUnlock = matchedItem
+                                                            } else {
+                                                                playWithPlaylist(matchedItem, listOf(matchedItem))
+                                                            }
+                                                        }
+                                                    })
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(16.dp))
                                         }
                                     }
-                                )
+                                }
+
+                                items(seriesGroups.keys.toList()) { seriesName ->
+                                    val episodes = seriesGroups[seriesName] ?: emptyList()
+                                    val posterItem = episodes.firstOrNull { !it.logo.isNullOrEmpty() } ?: episodes.first()
+                                    SeriesCard(
+                                        seriesName = seriesName,
+                                        item = posterItem,
+                                        episodeCount = episodes.size,
+                                        episodes = episodes,
+                                        onPlayEpisode = { ep ->
+                                            if (com.example.model.ParentalControlManager.isItemLocked(ep)) {
+                                                playlistForUnlock = episodes
+                                                itemToUnlock = ep
+                                            } else if (ep.url.contains("series_placeholder")) {
+                                                selectedSeries = episodes
+                                            } else {
+                                                playWithPlaylist(ep, episodes)
+                                            }
+                                        },
+                                        onClick = {
+                                            if (com.example.model.ParentalControlManager.isItemLocked(posterItem)) {
+                                                seriesToUnlock = episodes
+                                            } else {
+                                                selectedSeries = episodes
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -2124,21 +2356,35 @@ fun DashboardScreen(
                                 ) {
                                     item {
                                         val isAllSelected = selectedGroup == null
+                                        var isAllFocused by remember { mutableStateOf(false) }
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                .onFocusChanged { isAllFocused = it.isFocused }
+                                                .border(
+                                                    width = if (isAllFocused) 3.dp else if (isAllSelected) 1.5.dp else 0.dp,
+                                                    color = if (isAllFocused || isAllSelected) RedPrimary else Color.Transparent,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (isAllFocused) RedPrimary.copy(alpha = 0.30f)
+                                                    else if (isAllSelected) RedPrimary.copy(alpha = 0.15f)
+                                                    else Color.Transparent
+                                                )
                                                 .clickable {
                                                     selectedGroup = null
                                                     showCategoryDrawer = false
                                                 }
-                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                                .padding(horizontal = 12.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(
                                                 text = stringResource(R.string.filter_all).uppercase(),
-                                                color = if (isAllSelected) MaterialTheme.colorScheme.primary else Color.White,
-                                                fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isAllFocused) Color.White else if (isAllSelected) RedPrimary else Color.White,
+                                                fontWeight = if (isAllSelected || isAllFocused) FontWeight.ExtraBold else FontWeight.SemiBold,
                                                 fontSize = 15.sp,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -2146,8 +2392,8 @@ fun DashboardScreen(
                                             )
                                             Text(
                                                 text = "$totalTypeCount",
-                                                color = if (isAllSelected) MaterialTheme.colorScheme.primary else Color(0xFFCCCCCC),
-                                                fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isAllFocused) Color.White else if (isAllSelected) RedPrimary else Color(0xFFCCCCCC),
+                                                fontWeight = if (isAllSelected || isAllFocused) FontWeight.ExtraBold else FontWeight.SemiBold,
                                                 fontSize = 14.sp
                                             )
                                         }
@@ -2156,23 +2402,37 @@ fun DashboardScreen(
                                     items(displayGroups.size) { index ->
                                         val group = displayGroups[index]
                                         val isSelected = selectedGroup == group
+                                        var isGroupFocused by remember { mutableStateOf(false) }
                                         val count = groupCounts[group] ?: 0
 
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                .onFocusChanged { isGroupFocused = it.isFocused }
+                                                .border(
+                                                    width = if (isGroupFocused) 3.dp else if (isSelected) 1.5.dp else 0.dp,
+                                                    color = if (isGroupFocused || isSelected) RedPrimary else Color.Transparent,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (isGroupFocused) RedPrimary.copy(alpha = 0.30f)
+                                                    else if (isSelected) RedPrimary.copy(alpha = 0.15f)
+                                                    else Color.Transparent
+                                                )
                                                 .clickable {
                                                     selectedGroup = group
                                                     showCategoryDrawer = false
                                                 }
-                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                                .padding(horizontal = 12.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(
                                                 text = group.uppercase(),
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isGroupFocused) Color.White else if (isSelected) RedPrimary else Color.White,
+                                                fontWeight = if (isSelected || isGroupFocused) FontWeight.ExtraBold else FontWeight.SemiBold,
                                                 fontSize = 14.sp,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -2181,8 +2441,8 @@ fun DashboardScreen(
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text(
                                                     text = "$count",
-                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFCCCCCC),
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                    color = if (isGroupFocused) Color.White else if (isSelected) RedPrimary else Color(0xFFCCCCCC),
+                                                    fontWeight = if (isSelected || isGroupFocused) FontWeight.ExtraBold else FontWeight.SemiBold,
                                                     fontSize = 13.sp,
                                                     modifier = Modifier.padding(end = 8.dp)
                                                 )

@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,14 +28,27 @@ import com.example.model.PlaylistRepository
 @Composable
 fun PlaylistLoadingDialog() {
     val isLoading by PlaylistRepository.isLoading.collectAsState()
+    val isDialogDismissed by PlaylistRepository.isDialogDismissed.collectAsState()
+    val currentPlaylist by PlaylistRepository.playlist.collectAsState()
     val progress by PlaylistRepository.loadingProgress.collectAsState()
     val detail by PlaylistRepository.loadingDetail.collectAsState()
     val step by PlaylistRepository.loadStep.collectAsState()
     val error by PlaylistRepository.error.collectAsState()
 
-    if (isLoading) {
+    // Once the initial usable batch of channels is ready, auto-transition immediately
+    LaunchedEffect(currentPlaylist.isNotEmpty()) {
+        if (currentPlaylist.isNotEmpty() && !isDialogDismissed) {
+            PlaylistRepository.dismissLoadingDialog()
+        }
+    }
+
+    if (isLoading && !isDialogDismissed) {
         com.example.util.KeepSystemBarsHidden()
-        BackHandler(enabled = true) { /* Prevent dismiss while loading */ }
+        BackHandler(enabled = true) {
+            if (currentPlaylist.isNotEmpty()) {
+                PlaylistRepository.dismissLoadingDialog()
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -41,7 +56,11 @@ fun PlaylistLoadingDialog() {
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = { /* Consume clicks while loading */ }
+                    onClick = {
+                        if (currentPlaylist.isNotEmpty()) {
+                            PlaylistRepository.dismissLoadingDialog()
+                        }
+                    }
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -124,6 +143,25 @@ fun PlaylistLoadingDialog() {
                         textAlign = TextAlign.Center,
                         fontWeight = if (step == PlaylistLoadStep.COMPLETED) FontWeight.Bold else FontWeight.Normal
                     )
+
+                    if (currentPlaylist.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Button(
+                            onClick = { PlaylistRepository.dismissLoadingDialog() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                        ) {
+                            Text(
+                                text = "İçeriğe Geç (${currentPlaylist.size} Kanal Hazır)  ▶",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
                 }
             }
         }

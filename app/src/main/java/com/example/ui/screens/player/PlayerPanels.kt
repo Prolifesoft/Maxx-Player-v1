@@ -47,6 +47,7 @@ import com.example.model.CategoryManager
 import com.example.model.ParentalControlManager
 import com.example.model.PlayerRepository
 import com.example.model.PlaylistRepository
+import com.example.ui.theme.RedPrimary
 import com.example.R
 import com.example.parser.ItemType
 import com.example.parser.M3uItem
@@ -598,14 +599,14 @@ private fun TvChannelRowItem(
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
-                    isFocused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-                    isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                    isFocused -> RedPrimary.copy(alpha = 0.38f)
+                    isSelected -> RedPrimary.copy(alpha = 0.20f)
                     else -> Color.Transparent
                 }
             )
             .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                width = if (isFocused) 3.dp else 0.dp,
+                color = if (isFocused) RedPrimary else Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             )
             .focusProperties { canFocus = false }
@@ -644,9 +645,13 @@ private fun TvChannelRowItem(
 
         Text(
             text = displayName,
-            color = if (isSelected || isFocused) MaterialTheme.colorScheme.primary else Color.White,
-            fontWeight = if (isSelected || isFocused) FontWeight.Bold else FontWeight.Normal,
-            fontSize = 14.sp,
+            color = when {
+                isFocused -> Color.White
+                isSelected -> RedPrimary
+                else -> Color.White
+            },
+            fontWeight = if (isSelected || isFocused) FontWeight.ExtraBold else FontWeight.Normal,
+            fontSize = if (isFocused) 15.sp else 14.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
@@ -661,11 +666,11 @@ private fun TvChannelRowItem(
                     .size(16.dp)
                     .padding(start = 4.dp)
             )
-        } else if (isSelected) {
+        } else if (isSelected || isFocused) {
             Icon(
                 Icons.Default.PlayArrow,
-                contentDescription = "Oynatılıyor",
-                tint = MaterialTheme.colorScheme.primary,
+                contentDescription = if (isSelected) "Oynatılıyor" else "Seçili",
+                tint = RedPrimary,
                 modifier = Modifier.size(18.dp)
             )
         }

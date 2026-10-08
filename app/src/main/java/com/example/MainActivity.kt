@@ -183,11 +183,11 @@ class MainActivity : ComponentActivity() {
                                                 } else {
                                                     "${first.hostUrl}/get.php?username=${first.username}&password=${first.password}&type=m3u_plus&output=mpegts"
                                                 }
-                                                PlaylistRepository.loadPlaylist(this@MainActivity, urlToLoad)
                                                 navController.navigate(NavRoutes.DASHBOARD) {
                                                     popUpTo(NavRoutes.DEVICE_INFO) { inclusive = true }
                                                     launchSingleTop = true
                                                 }
+                                                PlaylistRepository.loadPlaylist(this@MainActivity, urlToLoad)
                                             } else {
                                                 navController.navigate(NavRoutes.PLAYLISTS) {
                                                     popUpTo(NavRoutes.DEVICE_INFO) { inclusive = true }
@@ -331,13 +331,12 @@ class MainActivity : ComponentActivity() {
                                     onSelectPlaylist = { host, user, pass -> 
                                         scope.launch {
                                             val urlToLoad = if (user.isEmpty() && pass.isEmpty()) host else "$host/get.php?username=$user&password=$pass&type=m3u_plus&output=mpegts"
+                                            navController.navigate(NavRoutes.DASHBOARD) {
+                                                popUpTo(NavRoutes.PLAYLISTS) { inclusive = false }
+                                                launchSingleTop = true
+                                            }
                                             PlaylistRepository.loadPlaylist(this@MainActivity, urlToLoad)
-                                            if (PlaylistRepository.error.value == null) {
-                                                navController.navigate(NavRoutes.DASHBOARD) {
-                                                    popUpTo(NavRoutes.PLAYLISTS) { inclusive = false }
-                                                    launchSingleTop = true
-                                                }
-                                            } else {
+                                            if (PlaylistRepository.error.value != null && PlaylistRepository.playlist.value.isEmpty()) {
                                                 android.widget.Toast.makeText(this@MainActivity, PlaylistRepository.error.value, android.widget.Toast.LENGTH_LONG).show()
                                             }
                                         }

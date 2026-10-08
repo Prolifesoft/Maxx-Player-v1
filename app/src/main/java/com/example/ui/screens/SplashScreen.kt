@@ -57,11 +57,11 @@ fun SplashScreen(
     var hasNavigated by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Stage 2: Preload last used playlist from cache while splash intro plays
+    // Stage 2: Preload last used or default playlist while splash intro plays
     LaunchedEffect(Unit) {
         try {
             val targetUrl = com.example.model.PlaylistRepository.resolveLastOrFirstPlaylistUrl(context)
-            if (!targetUrl.isNullOrBlank() && com.example.model.PlaylistRepository.hasCacheForUrl(context, targetUrl)) {
+            if (!targetUrl.isNullOrBlank()) {
                 com.example.model.PlaylistRepository.loadPlaylist(context, targetUrl)
             }
         } catch (_: Exception) {}
@@ -108,10 +108,12 @@ fun SplashScreen(
                     }
                     if (existingUser != null) {
                         if (!targetPlaylistUrl.isNullOrBlank()) {
-                            if (com.example.model.PlaylistRepository.hasCacheForUrl(context, targetPlaylistUrl) &&
-                                com.example.model.PlaylistRepository.playlist.value.isEmpty()
-                            ) {
-                                com.example.model.PlaylistRepository.loadPlaylist(context, targetPlaylistUrl)
+                            if (com.example.model.PlaylistRepository.playlist.value.isEmpty()) {
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        com.example.model.PlaylistRepository.loadPlaylist(context, targetPlaylistUrl)
+                                    } catch (_: Exception) {}
+                                }
                             }
                             onNavigateToNext(com.example.ui.NavRoutes.DASHBOARD, existingUser.id)
                         } else {
@@ -136,7 +138,11 @@ fun SplashScreen(
                 // Pre-extract or verify local cache file for maximum compatibility across emulators and devices
                 val cacheFile = java.io.File(context.cacheDir, "intro_cached.mp4")
                 try {
-                    if (!cacheFile.exists() || cacheFile.length() == 0L) {
+                    val rawFd = runCatching { context.resources.openRawResourceFd(R.raw.intro3) }.getOrNull()
+                    val rawLength = rawFd?.length ?: -1L
+                    rawFd?.close()
+                    // If cache does not exist, is empty, or size differs from the raw resource (e.g. user replaced intro3.mp4)
+                    if (!cacheFile.exists() || cacheFile.length() == 0L || (rawLength > 0L && cacheFile.length() != rawLength)) {
                         context.resources.openRawResource(R.raw.intro3).use { input ->
                             java.io.FileOutputStream(cacheFile).use { output ->
                                 input.copyTo(output)
@@ -187,6 +193,28 @@ fun SplashScreen(
         }
     }
 
+    // Safety watchdog: Automatically transitions as soon as video finishes or after timeout
+    LaunchedEffect(introPlayer) {
+        if (introPlayer != null) {
+            val startTime = System.currentTimeMillis()
+            while (!hasNavigated) {
+                delay(200)
+                try {
+                    val duration = introPlayer.duration
+                    val position = introPlayer.currentPosition
+                    if (duration > 0 && position >= duration - 200) {
+                        navigateNext()
+                        break
+                    }
+                    if (System.currentTimeMillis() - startTime > 15_000) {
+                        navigateNext()
+                        break
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             try { com.example.model.DeviceManager.init(context) } catch (e: Exception) { }
@@ -210,9 +238,10 @@ fun SplashScreen(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown &&
-                        (e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.Back)
-                    ) { navigateNext(); true } else false
+                    if (e.type == KeyEventType.KeyDown) {
+                        navigateNext()
+                        true
+                    } else false
                 }
                 .clickable { navigateNext() }
         ) {
@@ -236,6 +265,30 @@ fun SplashScreen(
                     }
                 }
             )
+
+            var showSkipHint by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                delay(600)
+                showSkipHint = true
+            }
+            if (showSkipHint) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 24.dp, end = 24.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .clickable { navigateNext() }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Geç  ▶",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
         }
     } else {
         Box(
