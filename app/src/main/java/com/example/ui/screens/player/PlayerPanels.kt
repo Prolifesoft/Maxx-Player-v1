@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -85,43 +86,123 @@ fun PlayerSidePanel(
 
     val isFavoritesMode = PlayerRepository.isFavoritesPlaylist && PlayerRepository.currentPlaylist.isNotEmpty()
     val isLive = playingItem?.type == ItemType.LIVE && !isFavoritesMode
+    val isSeries = playingItem?.type == ItemType.SERIES
 
-    // Canlı için veri kaynağı: PlaylistRepository.playlist içindeki canlı yayınlar
+    // Canlı, Film ve Dizi için tüm liste ve gizli kategoriler
     val allItems by PlaylistRepository.playlist.collectAsState()
     val hiddenCategories by CategoryManager.hiddenCategories.collectAsState()
 
+    // 1. CANLI: Canlı yayınlar ve grupları
     val liveItems = remember(allItems, hiddenCategories) {
         allItems.filter { it.type == ItemType.LIVE && !hiddenCategories.contains(it.group ?: "") }
     }
-
     val liveCategories = remember(liveItems) {
         val groups = liveItems.map { it.group?.ifBlank { "Diğer" } ?: "Diğer" }.distinct()
         if (groups.isEmpty()) listOf("Genel") else groups
     }
 
-    // Başlangıç kategorisi = oynayan kanalın group'u
-    var currentCategoryIndex by remember(isOpen) {
+    // 2. FİLM: Eğer film ise kategori bazlı gezinme
+    val movieItems = remember(allItems, hiddenCategories) {
+        allItems.filter { it.type == ItemType.MOVIE && !hiddenCategories.contains(it.group ?: "") }
+    }
+    val movieCategories = remember(movieItems) {
+        val groups = movieItems.map { it.group?.ifBlank { "Diğer" } ?: "Diğer" }.distinct()
+        if (groups.isEmpty()) listOf("Genel") else groups
+    }
+
+    // 3. DİZİ: Bölümler ve Sezon grupları
+    val seriesEpisodes = remember(playingItem, allItems) {
+        if (isSeries && playingItem != null) {
+            val fromRepo = PlayerRepository.lastSelectedSeries
+            if (!fromRepo.isNullOrEmpty()) {
+                fromRepo
+            } else {
+                val currentPl = PlayerRepository.currentPlaylist
+                val sName = (playingItem.seriesName ?: playingItem.title).trim()
+                    .trimEnd('-', '–', '—', ':', '|', ' ').trim()
+                if (currentPl.isNotEmpty() && currentPl.any { it.type == ItemType.SERIES }) {
+                    val inPl = currentPl.filter {
+                        (it.seriesName ?: it.title).trim().trimEnd('-', '–', '—', ':', '|', ' ').trim().equals(sName, ignoreCase = true) ||
+                        (playingItem.seriesName != null && it.seriesName.equals(playingItem.seriesName, ignoreCase = true))
+                    }
+                    if (inPl.size > 1) inPl else {
+                        val inAll = allItems.filter {
+                            it.type == ItemType.SERIES &&
+                            ((it.seriesName ?: it.title).trim().trimEnd('-', '–', '—', ':', '|', ' ').trim().equals(sName, ignoreCase = true) ||
+                             (playingItem.seriesName != null && it.seriesName.equals(playingItem.seriesName, ignoreCase = true)))
+                        }
+                        if (inAll.isNotEmpty()) inAll else currentPl
+                    }
+                } else {
+                    val inAll = allItems.filter {
+                        it.type == ItemType.SERIES &&
+                        ((it.seriesName ?: it.title).trim().trimEnd('-', '–', '—', ':', '|', ' ').trim().equals(sName, ignoreCase = true) ||
+                         (playingItem.seriesName != null && it.seriesName.equals(playingItem.seriesName, ignoreCase = true)))
+                    }
+                    if (inAll.isNotEmpty()) inAll else PlayerRepository.currentPlaylist
+                }
+            }
+        } else {
+            PlayerRepository.currentPlaylist
+        }
+    }
+    val groupedBySeason = remember(seriesEpisodes) {
+        seriesEpisodes.groupBy { it.season ?: 1 }.toSortedMap()
+    }
+    val seasons = remember(groupedBySeason) {
+        groupedBySeason.keys.toList()
+    }
+
+    // Başlangıç sezon indeksi
+    var currentSeasonIndex by remember(isOpen, playingItem, seasons) {
+        val currSeason = playingItem?.season ?: 1
+        val sIdx = seasons.indexOf(currSeason)
+        mutableIntStateOf(if (sIdx >= 0) sIdx else 0)
+    }
+
+    // Başlangıç kategorisi (Canlı veya Film için)
+    var currentCategoryIndex by remember(isOpen, isLive, isSeries) {
+        val cats = if (isLive) liveCategories else movieCategories
         val initialGroup = playingItem?.group?.ifBlank { "Diğer" } ?: "Diğer"
-        val idx = liveCategories.indexOf(initialGroup)
+        val idx = cats.indexOf(initialGroup)
         mutableIntStateOf(if (idx >= 0) idx else 0)
     }
 
-    val currentCategory = liveCategories.getOrElse(currentCategoryIndex) { "Genel" }
+    val currentCategory = if (isLive) {
+        liveCategories.getOrElse(currentCategoryIndex) { "Genel" }
+    } else {
+        movieCategories.getOrElse(currentCategoryIndex) { "Genel" }
+    }
 
     val channelsInCat = remember(currentCategory, liveItems) {
         liveItems.filter { (it.group?.ifBlank { "Diğer" } ?: "Diğer") == currentCategory }
     }
-    val playlist = PlayerRepository.currentPlaylist
-    val activeItems = if (isLive) channelsInCat else playlist
+    val moviesInCat = remember(currentCategory, movieItems) {
+        movieItems.filter { (it.group?.ifBlank { "Diğer" } ?: "Diğer") == currentCategory }
+    }
+    val currentSeason = if (seasons.isNotEmpty()) {
+        seasons.getOrNull(currentSeasonIndex.coerceIn(0, (seasons.size - 1).coerceAtLeast(0)))
+    } else null
 
-    // Seçili / odaklanmış öğe indeksi (Kategori değiştiğinde veya panel açıldığında güncellenir)
-    var focusedIndex by remember(currentCategory, isLive, isOpen) {
-        val list = if (isLive) {
-            liveItems.filter { (it.group?.ifBlank { "Diğer" } ?: "Diğer") == currentCategory }
+    val seasonEpisodes = remember(currentSeason, groupedBySeason, seriesEpisodes) {
+        if (currentSeason != null) {
+            (groupedBySeason[currentSeason] ?: emptyList()).sortedBy { it.episode ?: 0 }
         } else {
-            PlayerRepository.currentPlaylist
+            seriesEpisodes
         }
-        val activeIdx = list.indexOfFirst { it.url == playingItem?.url }
+    }
+
+    val playlist = PlayerRepository.currentPlaylist
+    val activeItems = when {
+        isLive -> channelsInCat
+        isSeries -> seasonEpisodes
+        isFavoritesMode -> playlist
+        else -> if (moviesInCat.isNotEmpty()) moviesInCat else playlist
+    }
+
+    // Seçili / odaklanmış öğe indeksi (Kategori / Sezon değiştiğinde veya panel açıldığında güncellenir)
+    var focusedIndex by remember(currentCategoryIndex, currentSeasonIndex, isLive, isSeries, isOpen) {
+        val activeIdx = activeItems.indexOfFirst { it.url == playingItem?.url }
         mutableIntStateOf(if (activeIdx >= 0) activeIdx else 0)
     }
 
@@ -133,8 +214,8 @@ fun PlayerSidePanel(
 
     val listState = rememberLazyListState()
 
-    // Kategori değiştiğinde veya panel açıldığında doğrudan ilgili öğeye konumlan
-    LaunchedEffect(currentCategory, isLive, isOpen) {
+    // Kategori veya sezon değiştiğinde veya panel açıldığında doğrudan ilgili öğeye konumlan
+    LaunchedEffect(currentCategoryIndex, currentSeasonIndex, isLive, isSeries, isOpen) {
         if (activeItems.isNotEmpty()) {
             val targetIdx = focusedIndex.coerceIn(0, activeItems.lastIndex)
             listState.scrollToItem(targetIdx)
@@ -186,16 +267,25 @@ fun PlayerSidePanel(
     var pendingPlayItem by remember { mutableStateOf<M3uItem?>(null) }
     var pendingPlayList by remember { mutableStateOf<List<M3uItem>>(emptyList()) }
 
+    fun navigateSeason(delta: Int) {
+        if (seasons.size <= 1) return
+        val newIndex = (currentSeasonIndex + delta + seasons.size) % seasons.size
+        currentSeasonIndex = newIndex
+        focusedIndex = 0
+    }
+
     fun navigateCategory(delta: Int) {
-        if (liveCategories.isEmpty()) return
-        val newIndex = (currentCategoryIndex + delta + liveCategories.size) % liveCategories.size
-        val nextCat = liveCategories[newIndex]
+        val cats = if (isLive) liveCategories else movieCategories
+        if (cats.size <= 1) return
+        val newIndex = (currentCategoryIndex + delta + cats.size) % cats.size
+        val nextCat = cats[newIndex]
 
         if (ParentalControlManager.isGroupLocked(nextCat)) {
             pendingCategoryIndex = newIndex
             showPinDialogForCategory = true
         } else {
             currentCategoryIndex = newIndex
+            focusedIndex = 0
         }
     }
 
@@ -225,7 +315,7 @@ fun PlayerSidePanel(
         } else if (nativeEvent.action == AndroidKeyEvent.ACTION_UP) {
             when (nativeEvent.keyCode) {
                 AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> isLive
+                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> isLive || (isSeries && seasons.size > 1) || (!isFavoritesMode && movieCategories.size > 1)
                 AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                 AndroidKeyEvent.KEYCODE_CHANNEL_DOWN,
                 AndroidKeyEvent.KEYCODE_DPAD_UP,
@@ -242,16 +332,42 @@ fun PlayerSidePanel(
         } else {
             val handled = when (nativeEvent.keyCode) {
                 AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (isLive) {
-                        navigateCategory(-1)
-                        true
-                    } else false
+                    when {
+                        isSeries -> {
+                            if (seasons.size > 1) {
+                                navigateSeason(-1)
+                                true
+                            } else false
+                        }
+                        isLive -> {
+                            navigateCategory(-1)
+                            true
+                        }
+                        movieCategories.size > 1 -> {
+                            navigateCategory(-1)
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (isLive) {
-                        navigateCategory(1)
-                        true
-                    } else false
+                    when {
+                        isSeries -> {
+                            if (seasons.size > 1) {
+                                navigateSeason(1)
+                                true
+                            } else false
+                        }
+                        isLive -> {
+                            navigateCategory(1)
+                            true
+                        }
+                        movieCategories.size > 1 -> {
+                            navigateCategory(1)
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                 AndroidKeyEvent.KEYCODE_CHANNEL_DOWN -> {
@@ -273,7 +389,7 @@ fun PlayerSidePanel(
                     val nowMs = System.currentTimeMillis()
                     val isOpeningPressOrRepeat = nativeEvent.repeatCount > 0 ||
                         nativeEvent.downTime <= panelOpenUptimeMs + 100L ||
-                        (nowMs - panelOpenTimeMs) < 400L
+                        (nowMs - panelOpenTimeMs) < 250L
                     if (!isOpeningPressOrRepeat && activeItems.isNotEmpty() && focusedIndex in activeItems.indices) {
                         handleItemClick(activeItems[focusedIndex], activeItems)
                     }
@@ -356,180 +472,391 @@ fun PlayerSidePanel(
                     }
                 }
         ) {
-            if (isLive) {
-                // Canlı yayın: Üst satır: [‹] "Kategori adı" (sıra/toplam) [›]
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { navigateCategory(-1) },
+            when {
+                isLive -> {
+                    // Canlı yayın: Üst satır: [‹] "Kategori adı" (sıra/toplam) [›]
+                    Row(
                         modifier = Modifier
-                            .size(36.dp)
-                            .focusProperties { canFocus = false }
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Önceki Kategori",
-                            tint = Color.White
-                        )
-                    }
-
-                    val catText = "$currentCategory (${currentCategoryIndex + 1}/${liveCategories.size})"
-                    Text(
-                        text = catText,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp)
-                    )
-
-                    IconButton(
-                        onClick = { navigateCategory(1) },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .focusProperties { canFocus = false }
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Sonraki Kategori",
-                            tint = Color.White
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onClose,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .focusProperties { canFocus = false }
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = stringResource(R.string.close_desc),
-                            tint = Color.Gray
-                        )
-                    }
-                }
-
-                HorizontalDivider(
-                    color = Color.White.copy(alpha = 0.12f),
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                // Kategoriye ait kanallar listesi
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    itemsIndexed(
-                        items = channelsInCat,
-                        key = { idx, item -> "${currentCategory}_${idx}_${item.url}" }
-                    ) { idx, item ->
-                        val isSelected = item.url == playingItem?.url
-                        val isItemFocused = idx == focusedIndex
-                        val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
-                                ParentalControlManager.isItemLocked(item)
-
-                        TvChannelRowItem(
-                            item = item,
-                            displayName = item.title,
-                            isSelected = isSelected,
-                            isItemFocused = isItemFocused,
-                            isLocked = isLocked,
-                            onClick = {
-                                focusedIndex = idx
-                                handleItemClick(item, channelsInCat)
-                            }
-                        )
-                    }
-                }
-            } else {
-                // Film/Dizi/Favori: Üst satırda başlık (favoride "Favoriler", dizide "Bölümler", filmde "Filmler")
-                val isSeries = playingItem?.type == ItemType.SERIES
-                val panelTitle = when {
-                    isFavoritesMode -> stringResource(R.string.favourites)
-                    isSeries -> stringResource(R.string.player_episodes)
-                    else -> stringResource(R.string.player_movies)
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "$panelTitle (${playlist.size})",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
-
-                    IconButton(
-                        onClick = onClose,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .focusProperties { canFocus = false }
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = stringResource(R.string.close_desc),
-                            tint = Color.Gray
-                        )
-                    }
-                }
-
-                HorizontalDivider(
-                    color = Color.White.copy(alpha = 0.12f),
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    itemsIndexed(
-                        items = playlist,
-                        key = { idx, item -> "pl_${idx}_${item.url}" }
-                    ) { idx, item ->
-                        val isSelected = item.url == playingItem?.url
-                        val isItemFocused = idx == focusedIndex
-                        val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
-                                ParentalControlManager.isItemLocked(item)
-
-                        val title = if (item.type == ItemType.SERIES) {
-                            val ep = item.episode?.let { "$epPrefix$it: " } ?: ""
-                            "$ep${item.title}"
-                        } else {
-                            item.title
+                        IconButton(
+                            onClick = { navigateCategory(-1) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Önceki Kategori",
+                                tint = Color.White
+                            )
                         }
 
-                        TvChannelRowItem(
-                            item = item,
-                            displayName = title,
-                            isSelected = isSelected,
-                            isItemFocused = isItemFocused,
-                            isLocked = isLocked,
-                            onClick = {
-                                focusedIndex = idx
-                                handleItemClick(item, playlist)
-                            }
+                        val catText = "$currentCategory (${currentCategoryIndex + 1}/${liveCategories.size})"
+                        Text(
+                            text = catText,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp)
                         )
+
+                        IconButton(
+                            onClick = { navigateCategory(1) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Sonraki Kategori",
+                                tint = Color.White
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = stringResource(R.string.close_desc),
+                                tint = Color.Gray
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    // Kategoriye ait kanallar listesi
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        itemsIndexed(
+                            items = channelsInCat,
+                            key = { idx, item -> "${currentCategory}_${idx}_${item.url}" }
+                        ) { idx, item ->
+                            val isSelected = item.url == playingItem?.url
+                            val isItemFocused = idx == focusedIndex
+                            val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
+                                    ParentalControlManager.isItemLocked(item)
+
+                            TvChannelRowItem(
+                                item = item,
+                                displayName = item.title,
+                                isSelected = isSelected,
+                                isItemFocused = isItemFocused,
+                                isLocked = isLocked,
+                                onClick = {
+                                    focusedIndex = idx
+                                    handleItemClick(item, channelsInCat)
+                                }
+                            )
+                        }
+                    }
+                }
+                isSeries -> {
+                    // Dizi: Üst satırda Sezon seçici [‹] Sezon X (1/Y) [›]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (seasons.size > 1) {
+                            IconButton(
+                                onClick = { navigateSeason(-1) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .focusProperties { canFocus = false }
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Önceki Sezon",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+
+                        val seasonLabel = if (seasons.isNotEmpty()) {
+                            val sNum = currentSeason ?: 1
+                            if (seasons.size > 1) {
+                                "${stringResource(R.string.season_prefix)} $sNum (${currentSeasonIndex + 1}/${seasons.size})"
+                            } else {
+                                "${stringResource(R.string.season_prefix)} $sNum"
+                            }
+                        } else {
+                            stringResource(R.string.player_episodes)
+                        }
+
+                        Text(
+                            text = "$seasonLabel • ${seasonEpisodes.size} ${stringResource(R.string.episodes_suffix)}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp)
+                        )
+
+                        if (seasons.size > 1) {
+                            IconButton(
+                                onClick = { navigateSeason(1) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .focusProperties { canFocus = false }
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Sonraki Sezon",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = stringResource(R.string.close_desc),
+                                tint = Color.Gray
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    // Sezona ait bölümler listesi
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        itemsIndexed(
+                            items = seasonEpisodes,
+                            key = { idx, item -> "ep_${currentSeasonIndex}_${idx}_${item.url}" }
+                        ) { idx, item ->
+                            val isSelected = item.url == playingItem?.url
+                            val isItemFocused = idx == focusedIndex
+                            val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
+                                    ParentalControlManager.isItemLocked(item)
+
+                            val ep = item.episode?.let { "$epPrefix$it: " } ?: ""
+                            val title = "$ep${item.title}"
+
+                            TvChannelRowItem(
+                                item = item,
+                                displayName = title,
+                                isSelected = isSelected,
+                                isItemFocused = isItemFocused,
+                                isLocked = isLocked,
+                                onClick = {
+                                    focusedIndex = idx
+                                    handleItemClick(item, seasonEpisodes)
+                                }
+                            )
+                        }
+                    }
+                }
+                isFavoritesMode -> {
+                    // Favoriler
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${stringResource(R.string.favourites)} (${playlist.size})",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = stringResource(R.string.close_desc),
+                                tint = Color.Gray
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        itemsIndexed(
+                            items = playlist,
+                            key = { idx, item -> "fav_${idx}_${item.url}" }
+                        ) { idx, item ->
+                            val isSelected = item.url == playingItem?.url
+                            val isItemFocused = idx == focusedIndex
+                            val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
+                                    ParentalControlManager.isItemLocked(item)
+
+                            TvChannelRowItem(
+                                item = item,
+                                displayName = item.title,
+                                isSelected = isSelected,
+                                isItemFocused = isItemFocused,
+                                isLocked = isLocked,
+                                onClick = {
+                                    focusedIndex = idx
+                                    handleItemClick(item, playlist)
+                                }
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    // Film: Kategori seçici [‹] Kategori (1/X) [›] ve filmler listesi
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (movieCategories.size > 1) {
+                            IconButton(
+                                onClick = { navigateCategory(-1) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .focusProperties { canFocus = false }
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Önceki Kategori",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+
+                        val catText = if (movieCategories.size > 1) {
+                            "$currentCategory (${currentCategoryIndex + 1}/${movieCategories.size}) • ${moviesInCat.size}"
+                        } else {
+                            "$currentCategory (${moviesInCat.size})"
+                        }
+
+                        Text(
+                            text = catText,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp)
+                        )
+
+                        if (movieCategories.size > 1) {
+                            IconButton(
+                                onClick = { navigateCategory(1) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .focusProperties { canFocus = false }
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Sonraki Kategori",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = stringResource(R.string.close_desc),
+                                tint = Color.Gray
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    val displayMovies = if (moviesInCat.isNotEmpty()) moviesInCat else playlist
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        itemsIndexed(
+                            items = displayMovies,
+                            key = { idx, item -> "movie_${currentCategoryIndex}_${idx}_${item.url}" }
+                        ) { idx, item ->
+                            val isSelected = item.url == playingItem?.url
+                            val isItemFocused = idx == focusedIndex
+                            val isLocked = ParentalControlManager.isGroupLocked(item.group ?: "") ||
+                                    ParentalControlManager.isItemLocked(item)
+
+                            TvChannelRowItem(
+                                item = item,
+                                displayName = item.title,
+                                isSelected = isSelected,
+                                isItemFocused = isItemFocused,
+                                isLocked = isLocked,
+                                onClick = {
+                                    focusedIndex = idx
+                                    handleItemClick(item, displayMovies)
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -591,7 +918,9 @@ private fun TvChannelRowItem(
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isFocused = isItemFocused
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isHighlighted = isItemFocused || isPressed
+    val isFocused = isHighlighted
 
     Row(
         modifier = Modifier
@@ -599,14 +928,14 @@ private fun TvChannelRowItem(
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
-                    isFocused -> RedPrimary.copy(alpha = 0.38f)
+                    isHighlighted -> RedPrimary.copy(alpha = 0.38f)
                     isSelected -> RedPrimary.copy(alpha = 0.20f)
                     else -> Color.Transparent
                 }
             )
             .border(
-                width = if (isFocused) 3.dp else 0.dp,
-                color = if (isFocused) RedPrimary else Color.Transparent,
+                width = if (isHighlighted) 3.dp else 0.dp,
+                color = if (isHighlighted) RedPrimary else Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             )
             .focusProperties { canFocus = false }

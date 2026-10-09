@@ -3,7 +3,10 @@ package com.example.ui.screens
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -737,11 +740,22 @@ fun PlayListsScreen(
                 ) {
                     items(filteredPlaylists.size) { index ->
                         val playlist = filteredPlaylists[index]
+                        var isRowFocused by remember { mutableStateOf(false) }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .onFocusChanged { isRowFocused = it.isFocused }
+                                .border(
+                                    width = if (isRowFocused) 3.dp else 0.dp,
+                                    color = if (isRowFocused) RedPrimary else Color.Transparent,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
                                 .clickable { onSelectPlaylist(playlist.hostUrl, playlist.username, playlist.password) }
-                                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isRowFocused) RedPrimary.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.surface,
+                                    RoundedCornerShape(12.dp)
+                                )
                                 .padding(
                                     horizontal = if (isLandscapeScreen) 14.dp else 16.dp,
                                     vertical = if (isLandscapeScreen) 10.dp else 16.dp

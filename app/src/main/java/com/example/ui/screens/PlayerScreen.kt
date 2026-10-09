@@ -958,12 +958,7 @@ fun PlayerScreen(
                                 false
                             } else {
                                 if (keyEvent.nativeKeyEvent.repeatCount == 0) {
-                                    if (exoPlayer.isPlaying) {
-                                        saveItemProgress(playingItem, exoPlayer.currentPosition, exoPlayer.duration)
-                                        exoPlayer.pause()
-                                    } else {
-                                        exoPlayer.play()
-                                    }
+                                    showPlaylistSheet = true
                                     isControllerVisible = true
                                 }
                                 true
