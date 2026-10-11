@@ -31,7 +31,9 @@ data class TmdbFullDetail(
     val runtimeMinutes: Int?,      // filmde dakika; dizide ortalama bölüm süresi
     val directors: List<String>,
     val cast: List<TmdbCastMember>,
-    val backdropUrls: List<String> = emptyList()
+    val backdropUrls: List<String> = emptyList(),
+    val genres: List<String> = emptyList(),
+    val trailerKey: String? = null
 )
 
 private val tmdbDetailCache = mutableMapOf<String, TmdbFullDetail?>()
@@ -258,6 +260,47 @@ suspend fun fetchTmdbFullDetail(
                 backdropSet.firstOrNull()
             }
 
+            val genreList = mutableListOf<String>()
+            val genresArr = root.optJSONArray("genres")
+            if (genresArr != null) {
+                for (i in 0 until genresArr.length()) {
+                    val gName = genresArr.getJSONObject(i).optString("name")
+                    if (gName.isNotBlank()) genreList.add(gName)
+                }
+            }
+
+            var resolvedTrailerKey: String? = null
+            try {
+                val videosUrl = "https://api.themoviedb.org/3/$actualMediaType/$resolvedId/videos?api_key=$apiKey&language=tr-TR"
+                val vJson = httpGet(videosUrl)
+                val vArr = vJson?.let { JSONObject(it).optJSONArray("results") }
+                if (vArr != null) {
+                    for (i in 0 until vArr.length()) {
+                        val v = vArr.getJSONObject(i)
+                        if (v.optString("site").equals("YouTube", true) && v.optString("type").equals("Trailer", true)) {
+                            resolvedTrailerKey = v.optString("key")
+                            break
+                        }
+                    }
+                }
+                if (resolvedTrailerKey == null) {
+                    val enVideosUrl = "https://api.themoviedb.org/3/$actualMediaType/$resolvedId/videos?api_key=$apiKey"
+                    val enVJson = httpGet(enVideosUrl)
+                    val enVArr = enVJson?.let { JSONObject(it).optJSONArray("results") }
+                    if (enVArr != null) {
+                        for (i in 0 until enVArr.length()) {
+                            val v = enVArr.getJSONObject(i)
+                            if (v.optString("site").equals("YouTube", true) && v.optString("type").equals("Trailer", true)) {
+                                resolvedTrailerKey = v.optString("key")
+                                break
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
             val detail = TmdbFullDetail(
                 tmdbId = resolvedId.toString(),
                 title = root.optString("title").ifBlank { root.optString("name", cleanedQuery) },
@@ -269,7 +312,9 @@ suspend fun fetchTmdbFullDetail(
                 runtimeMinutes = runtime,
                 directors = directors,
                 cast = castList,
-                backdropUrls = backdropSet.toList()
+                backdropUrls = backdropSet.toList(),
+                genres = genreList,
+                trailerKey = resolvedTrailerKey
             )
             synchronized(tmdbDetailCache) { tmdbDetailCache[cacheKey] = detail }
             detail
@@ -654,4 +699,103 @@ fun parseEspnFixtures(jsonString: String, leagueName: String = "Trendyol Süper 
         e.printStackTrace()
     }
     return list
+}
+
+suspend fun fetchTmdbSeriesBackdrop(seriesName: String): Pair<String?, String?> {
+    // Dönen değer: (backdropUrl, trailerKey)
+    return withContext(Dispatchers.IO) {
+        try {
+            val apiKey = "15745c1c46c264d1170db38ea66049e0"
+            // Başlıktaki kalite/yıl etiketlerini temizle
+            val cleanedName = seriesName
+                .replace(Regex("\\(\\d{4}\\)|\\b\\d{4}\\b|1080p|720p|4K|HD", RegexOption.IGNORE_CASE), "")
+                .trim()
+            val queryName = if (cleanedName.isNotBlank()) cleanedName else seriesName
+            val searchUrl = "https://api.themoviedb.org/3/search/tv?api_key=$apiKey" +
+                "&query=${URLEncoder.encode(queryName, "UTF-8")}&language=tr-TR"
+            val conn = URL(searchUrl).openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            if (conn.responseCode != 200) return@withContext Pair(null, null)
+            val results = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results")
+            if (results == null || results.length() == 0) return@withContext Pair(null, null)
+            val tvId = results.getJSONObject(0).optInt("id")
+            val backdropPath = results.getJSONObject(0).optString("backdrop_path", null)
+            val backdropUrl = if (!backdropPath.isNullOrBlank()) "https://image.tmdb.org/t/p/w1280$backdropPath" else null
+
+            // Fragman (YouTube) ara
+            val videosUrl = "https://api.themoviedb.org/3/tv/$tvId/videos?api_key=$apiKey"
+            val vConn = URL(videosUrl).openConnection() as HttpURLConnection
+            vConn.connectTimeout = 4000
+            vConn.readTimeout = 4000
+            var trailerKey: String? = null
+            if (vConn.responseCode == 200) {
+                val vJson = JSONObject(vConn.inputStream.bufferedReader().use { it.readText() })
+                val vResults = vJson.optJSONArray("results")
+                if (vResults != null) {
+                    for (i in 0 until vResults.length()) {
+                        val v = vResults.getJSONObject(i)
+                        if (v.optString("site").equals("YouTube", true) && v.optString("type").equals("Trailer", true)) {
+                            trailerKey = v.optString("key")
+                            break
+                        }
+                    }
+                }
+            }
+            Pair(backdropUrl, trailerKey)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Pair(null, null)
+        }
+    }
+}
+
+suspend fun fetchTmdbMovieBackdrop(movieTitle: String): Pair<String?, String?> {
+    // Dönen değer: (backdropUrl, trailerKey)
+    return withContext(Dispatchers.IO) {
+        try {
+            val apiKey = "15745c1c46c264d1170db38ea66049e0"
+            val cleanedName = cleanMediaSearchQuery(movieTitle)
+            val queryName = if (cleanedName.isNotBlank()) cleanedName else movieTitle
+            val searchUrl = "https://api.themoviedb.org/3/search/movie?api_key=$apiKey" +
+                "&query=${URLEncoder.encode(queryName, "UTF-8")}&language=tr-TR"
+            val conn = URL(searchUrl).openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            if (conn.responseCode != 200) return@withContext Pair(null, null)
+            val results = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results")
+            if (results == null || results.length() == 0) return@withContext Pair(null, null)
+            val movieId = results.getJSONObject(0).optInt("id")
+            val backdropPath = results.getJSONObject(0).optString("backdrop_path", null)
+            val backdropUrl = if (!backdropPath.isNullOrBlank()) "https://image.tmdb.org/t/p/w1280$backdropPath" else null
+
+            // Fragman (YouTube) ara
+            var trailerKey: String? = null
+            for (lang in listOf("tr-TR", "")) {
+                val videosUrl = "https://api.themoviedb.org/3/movie/$movieId/videos?api_key=$apiKey" +
+                    (if (lang.isNotEmpty()) "&language=$lang" else "")
+                val vConn = URL(videosUrl).openConnection() as HttpURLConnection
+                vConn.connectTimeout = 4000
+                vConn.readTimeout = 4000
+                if (vConn.responseCode == 200) {
+                    val vJson = JSONObject(vConn.inputStream.bufferedReader().use { it.readText() })
+                    val vResults = vJson.optJSONArray("results")
+                    if (vResults != null) {
+                        for (i in 0 until vResults.length()) {
+                            val v = vResults.getJSONObject(i)
+                            if (v.optString("site").equals("YouTube", true) && v.optString("type").equals("Trailer", true)) {
+                                trailerKey = v.optString("key")
+                                break
+                            }
+                        }
+                    }
+                }
+                if (trailerKey != null) break
+            }
+            Pair(backdropUrl, trailerKey)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Pair(null, null)
+        }
+    }
 }

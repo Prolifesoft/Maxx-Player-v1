@@ -145,9 +145,33 @@ fun PlayListsScreen(
         }
     }
 
-    val filteredPlaylists = playlists.filter { it.name.contains(searchQuery, ignoreCase = true) || it.username.contains(searchQuery, ignoreCase = true) }
+    val playlistExpireDates = remember { mutableStateMapOf<String, String>() }
+
+    LaunchedEffect(playlists) {
+        withContext(Dispatchers.IO) {
+            for (p in playlists) {
+                val cached = OdooIntegrationManager.playlistExpireDateMap[p.hostUrl]
+                    ?: OdooIntegrationManager.playlistExpireDateMap[p.name]
+                    ?: com.example.model.XtreamCodesApi.playlistExpireDateCache["${p.hostUrl}:${p.username}"]
+                if (cached != null) {
+                    withContext(Dispatchers.Main) {
+                        playlistExpireDates[p.hostUrl] = cached
+                    }
+                } else if (p.username.isNotBlank() && p.password.isNotBlank()) {
+                    val fetched = com.example.model.XtreamCodesApi.getPlaylistExpireDate(p.hostUrl, p.username, p.password)
+                    if (fetched != null) {
+                        withContext(Dispatchers.Main) {
+                            playlistExpireDates[p.hostUrl] = fetched
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscapeScreen = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val filteredPlaylists = if (isLandscapeScreen) playlists else playlists.filter { it.name.contains(searchQuery, ignoreCase = true) || it.username.contains(searchQuery, ignoreCase = true) }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -314,50 +338,52 @@ fun PlayListsScreen(
                 )
         ) {
             if (isLandscapeScreen) {
-                // YATAY MOD: Paket bilgisi ve Arama kutusu yan yana tek kompakt satırda
-                Row(
+                // YATAY MOD: Alınan Paket Bilgisi ve Bitiş Tarihi Duyuru Alanı (Geniş & Tam Sığan Yeşil Alan, Sağdaki Arama Kaldırıldı)
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(vertical = 4.dp)
+                        .clickable { onDeviceInfo() },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isPro) Color(0xFF1B3A24) else if (isProOrInTrial) Color(0xFF1B3A24) else Color(0xFF3E2723)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isPro || isProOrInTrial) Color(0xFF81C784).copy(alpha = 0.55f) else Color(0xFFFFB74D).copy(alpha = 0.55f)
+                    )
                 ) {
-                    Card(
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .clickable { onDeviceInfo() },
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isPro) Color(0xFF1B3A24) else if (isProOrInTrial) Color(0xFF1E2838) else Color(0xFF3E2723)
-                        ),
-                        shape = RoundedCornerShape(10.dp)
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
-                                if (isPro) Icons.Default.Verified else if (isProOrInTrial) Icons.Default.Timer else Icons.Default.Warning,
+                                imageVector = if (isPro) Icons.Default.Verified else if (isProOrInTrial) Icons.Default.Timer else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = if (isPro) Color(0xFF81C784) else if (isProOrInTrial) Color(0xFF64B5F6) else Color(0xFFFFB74D),
-                                modifier = Modifier.size(18.dp)
+                                tint = if (isPro || isProOrInTrial) Color(0xFF81C784) else Color(0xFFFFB74D),
+                                modifier = Modifier.size(24.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = if (isPro || isProOrInTrial) "$activePackageName ($daysRemaining gün kaldı)" else "$activePackageName (Süresi Doldu)",
+                                    text = if (isPro || isProOrInTrial) "$activePackageName • $daysRemaining gün kaldı" else "$activePackageName (Süresi Doldu)",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.5.sp,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                                 val packageSubtext = if (!packageExpireDate.isNullOrBlank()) {
-                                    "Bitiş: $packageExpireDate • Web portalından senkronize"
+                                    "Paket Bitiş Tarihi: $packageExpireDate • Web portalından senkronize edildi"
                                 } else if (!packageDuration.isNullOrBlank()) {
-                                    "Süre: $packageDuration • Web portalından senkronize"
+                                    "Paket Süresi: $packageDuration • Web portalından senkronize edildi"
                                 } else if (isPro) {
                                     "Web portalından tanımlı aktif paket"
                                 } else {
@@ -365,57 +391,35 @@ fun PlayListsScreen(
                                 }
                                 Text(
                                     text = packageSubtext,
-                                    color = Color.LightGray,
-                                    fontSize = 9.5.sp,
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
-                            Button(
-                                onClick = {
-                                    val shopUrl = DeviceManager.getPackageShopUrl()
-                                    inAppShopUrl = shopUrl
-                                    openExternalBrowserSafely(
-                                        context = context,
-                                        url = shopUrl,
-                                        onFallbackToInApp = { showInAppWebShop = true }
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(13.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Paket Satın Al", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
                         }
-                    }
 
-                    if (playlists.isNotEmpty()) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text(stringResource(R.string.search_placeholder), color = Color.Gray, fontSize = 12.sp) },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = RedPrimary, modifier = Modifier.size(18.dp)) },
-                            trailingIcon = {
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Clear, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-                                    }
-                                }
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Button(
+                            onClick = {
+                                val shopUrl = DeviceManager.getPackageShopUrl()
+                                inAppShopUrl = shopUrl
+                                openExternalBrowserSafely(
+                                    context = context,
+                                    url = shopUrl,
+                                    onFallbackToInApp = { showInAppWebShop = true }
+                                )
                             },
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 12.sp),
-                            modifier = Modifier
-                                .weight(0.85f)
-                                .height(46.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = RedPrimary,
-                                unfocusedBorderColor = Color.DarkGray
-                            ),
-                            shape = RoundedCornerShape(22.dp)
-                        )
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Paket Satın Al", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             } else {
@@ -792,11 +796,62 @@ fun PlayListsScreen(
                                     )
                                 }
                             }
+
+                            // Bitiş Tarihi Bilgisi (Çalma listesi ismi ile Play simgesi arasında)
+                            val specificExpire = playlistExpireDates[playlist.hostUrl]
+                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.hostUrl]
+                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.name]
+                            val displayExpiry = when {
+                                !specificExpire.isNullOrBlank() -> specificExpire
+                                !packageExpireDate.isNullOrBlank() -> packageExpireDate!!
+                                daysRemaining > 0 -> "$daysRemaining gün kaldı"
+                                isPro -> "Süresiz PRO"
+                                else -> "Süresi Doldu"
+                            }
+                            val isExpired = displayExpiry.contains("Doldu", ignoreCase = true)
+
+                            Surface(
+                                color = if (isExpired) Color(0xFF3E2723) else Color(0xFF1B3A24).copy(alpha = 0.85f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isExpired) Color(0xFFFFB74D).copy(alpha = 0.45f) else Color(0xFF81C784).copy(alpha = 0.45f)
+                                ),
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (isExpired) Icons.Default.Warning else Icons.Default.Event,
+                                        contentDescription = null,
+                                        tint = if (isExpired) Color(0xFFFFB74D) else Color(0xFF81C784),
+                                        modifier = Modifier.size(if (isLandscapeScreen) 13.dp else 14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Column {
+                                        Text(
+                                            text = "Bitiş Tarihi",
+                                            color = if (isExpired) Color(0xFFFFCC80) else Color(0xFFA5D6A7),
+                                            fontSize = if (isLandscapeScreen) 9.sp else 9.5.sp,
+                                            fontWeight = FontWeight.Normal
+                                        )
+                                        Text(
+                                            text = displayExpiry,
+                                            color = Color.White,
+                                            fontSize = if (isLandscapeScreen) 11.sp else 11.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
                             Icon(
                                 Icons.Default.PlayArrow,
                                 contentDescription = null,
                                 tint = RedPrimary,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }

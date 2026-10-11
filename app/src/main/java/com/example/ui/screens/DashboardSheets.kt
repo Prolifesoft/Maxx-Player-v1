@@ -34,7 +34,8 @@ import kotlinx.coroutines.launch
 fun SeriesDetailSheet(
     items: List<M3uItem>,
     onPlayStream: (M3uItem) -> Unit,
-    onClose: () -> Unit = {}
+    onClose: () -> Unit = {},
+    showHeader: Boolean = true
 ) {
     com.example.util.KeepSystemBarsHidden()
     val context = LocalContext.current
@@ -102,54 +103,60 @@ fun SeriesDetailSheet(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(if (isLandscape) 0.94f else 0.82f)
-            .padding(top = if (isLandscape) 4.dp else 8.dp, bottom = if (isLandscape) 8.dp else 36.dp)
-    ) {
-        Row(
-            modifier = Modifier
+        modifier = if (showHeader) {
+            Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = if (isLandscape) 6.dp else 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = seriesName,
-                fontSize = if (isLandscape) 17.sp else 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            val resumeEp = lastWatchedEpisode
-            if (resumeEp != null) {
-                val posPair = episodeProgressMap[resumeEp.url]
-                val posStr = if (posPair != null) " (${formatMs(posPair.first)})" else ""
-                Button(
-                    onClick = { onPlayStream(resumeEp) },
-                    colors = ButtonDefaults.buttonColors(containerColor = RedPrimary),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.padding(end = 8.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Devam Et: S${resumeEp.season ?: 1} B${resumeEp.episode ?: "?"}$posStr",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                .fillMaxHeight(if (isLandscape) 0.94f else 0.82f)
+                .padding(top = if (isLandscape) 4.dp else 8.dp, bottom = if (isLandscape) 8.dp else 36.dp)
+        } else {
+            Modifier.fillMaxSize()
+        }
+    ) {
+        if (showHeader) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = if (isLandscape) 6.dp else 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = seriesName,
+                    fontSize = if (isLandscape) 17.sp else 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val resumeEp = lastWatchedEpisode
+                if (resumeEp != null) {
+                    val posPair = episodeProgressMap[resumeEp.url]
+                    val posStr = if (posPair != null) " (${formatMs(posPair.first)})" else ""
+                    Button(
+                        onClick = { onPlayStream(resumeEp) },
+                        colors = ButtonDefaults.buttonColors(containerColor = RedPrimary),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Devam Et: S${resumeEp.season ?: 1} B${resumeEp.episode ?: "?"}$posStr",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                IconButton(onClick = onClose, modifier = Modifier.size(if (isLandscape) 32.dp else 40.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.close_desc),
+                        tint = Color.Gray
                     )
                 }
-            }
-            IconButton(onClick = onClose, modifier = Modifier.size(if (isLandscape) 32.dp else 40.dp)) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.close_desc),
-                    tint = Color.Gray
-                )
             }
         }
 

@@ -325,4 +325,7 @@
     <string name="fav_empty_series">No favorite series added yet</string>
     <string name="fav_empty_live">No favorite live TV channels added yet</string>
     <string name="fav_show_all_btn">Show All Favorites</string>
+    <string name="close_btn">Close</string>
+    <string name="favorite_btn">Favorite</string>
+    <string name="favorited_btn">In Favorites</string>
 </resources>

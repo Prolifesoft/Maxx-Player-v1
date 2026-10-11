@@ -327,4 +327,7 @@
     <string name="fav_empty_series">Henüz favori dizi eklenmedi</string>
     <string name="fav_empty_live">Henüz favori canlı TV kanalı eklenmedi</string>
     <string name="fav_show_all_btn">Tüm Favorileri Göster</string>
+    <string name="close_btn">Kapat</string>
+    <string name="favorite_btn">Favori</string>
+    <string name="favorited_btn">Favorilerde</string>
 </resources>

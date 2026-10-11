@@ -30,4 +30,9 @@ object PlayerRepository {
         val isNearEnd = dur > 30_000L && pos >= dur - 8_000L
         return if (pos > 1000L && !isNearEnd) pos else 0L
     }
+
+    fun findResumeItem(items: List<M3uItem>): M3uItem? {
+        if (items.isEmpty()) return null
+        return items.firstOrNull { ep -> getSavedPositionMs(ep.url) > 0L }
+    }
 }

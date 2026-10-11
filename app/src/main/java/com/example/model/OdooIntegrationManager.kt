@@ -53,6 +53,8 @@ object OdooIntegrationManager {
     private val _portalCheckStatusText = MutableStateFlow<String?>(null)
     val portalCheckStatusText: StateFlow<String?> = _portalCheckStatusText.asStateFlow()
 
+    val playlistExpireDateMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     fun isCreditOrShopItem(name: String, url: String = "", username: String = ""): Boolean {
         val lowerName = name.lowercase(java.util.Locale.ROOT)
         val lowerNameTr = name.lowercase(java.util.Locale.forLanguageTag("tr"))
@@ -629,6 +631,17 @@ object OdooIntegrationManager {
 
             // Krediler ve mağaza web bağlantıları çalma listesi olarak eklenmemelidir
             if (isCreditOrShopItem(name, hostUrl, username)) return null
+
+            val itemExp = item.optString("expire_date",
+                item.optString("expiration_date",
+                    item.optString("package_expire_date",
+                        item.optString("end_date",
+                            item.optString("valid_until",
+                                item.optString("bitis_tarihi", "")))))).trim()
+            if (itemExp.isNotBlank() && itemExp != "null") {
+                playlistExpireDateMap[hostUrl] = itemExp
+                if (name.isNotBlank()) playlistExpireDateMap[name] = itemExp
+            }
 
             return OdooPlaylistPayload(
                 name = if (name.isNotBlank()) name else "Maxx Player Listesi ${index + 1}",

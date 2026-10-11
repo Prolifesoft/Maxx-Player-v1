@@ -198,6 +198,18 @@ fun PlayerScreen(
     var playlistPanelKeyHandler by remember { mutableStateOf<((AndroidKeyEvent) -> Boolean)?>(null) }
     var isBottomBarFocused by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+    val bottomBarFocusRequester = remember { FocusRequester() }
+
+    val focusBottomBar: () -> Unit = {
+        isControllerVisible = true
+        lastInteractionTime = System.currentTimeMillis()
+        scope.launch {
+            delay(50)
+            try {
+                bottomBarFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
 
     // Request focus for D-Pad / Remote keys when panels or bottom bar close or screen opens
     LaunchedEffect(showPlaylistSheet, showSettingsSheet, isControllerVisible, showResumePrompt) {
@@ -943,8 +955,14 @@ fun PlayerScreen(
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_LEFT,
                         AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            isControllerVisible = true
-                            false
+                            if (isControllerVisible && isBottomBarFocused) {
+                                // Kullanıcı alt bar butonları arasında geziniyor
+                                false
+                            } else {
+                                // Canlı TV: Sol ve Sağ yön tuşlarına basılınca player özellikleri ve ayarlar menüsü aktif olsun
+                                focusBottomBar()
+                                true
+                            }
                         }
                         else -> false
                     }
@@ -1026,8 +1044,13 @@ fun PlayerScreen(
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_UP,
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            isControllerVisible = true
-                            false // Let focus pass to bottom bar buttons
+                            if (isControllerVisible && isBottomBarFocused) {
+                                false // Odak alt çubukta iken gezintiye izin ver
+                            } else {
+                                // Film/Dizi: Üst ok veya alt ok yön tuşuna basılınca alttaki kontrol paneli aktif olsun ve odak alsın
+                                focusBottomBar()
+                                true
+                            }
                         }
                         else -> false
                     }
@@ -1281,7 +1304,8 @@ fun PlayerScreen(
                     },
                     onBarFocusChanged = { focused ->
                         isBottomBarFocused = focused
-                    }
+                    },
+                    initialFocusRequester = bottomBarFocusRequester
                 )
             }
         }

@@ -16,6 +16,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -54,6 +56,7 @@ fun PlayerBottomBar(
     onListClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onBarFocusChanged: (Boolean) -> Unit = {},
+    initialFocusRequester: androidx.compose.ui.focus.FocusRequester? = null,
     modifier: Modifier = Modifier
 ) {
     val isLive = item?.type == ItemType.LIVE
@@ -267,7 +270,8 @@ fun PlayerBottomBar(
                             icon = Icons.Default.Replay10,
                             contentDescription = "10 sn geri",
                             iconSize = 28.dp,
-                            onClick = onSeekBackClick
+                            onClick = onSeekBackClick,
+                            modifier = if (initialFocusRequester != null) Modifier.focusRequester(initialFocusRequester) else Modifier
                         )
 
                         TvFocusableIconButton(
@@ -300,7 +304,8 @@ fun PlayerBottomBar(
                         icon = Icons.Default.List,
                         contentDescription = stringResource(R.string.player_channel_list),
                         iconSize = 28.dp,
-                        onClick = onListClick
+                        onClick = onListClick,
+                        modifier = if (isLive && initialFocusRequester != null) Modifier.focusRequester(initialFocusRequester) else Modifier
                     )
 
                     // Ayarlar (dişli)
@@ -340,6 +345,7 @@ fun TvFocusableIconButton(
                 color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
                 shape = CircleShape
             )
+            .focusable(interactionSource = interactionSource)
             .clickable(interactionSource = interactionSource, indication = null) { onClick() },
         contentAlignment = Alignment.Center
     ) {

@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class PlaylistLoadStep {
     IDLE,
@@ -85,6 +87,51 @@ object PlaylistRepository {
         val clean = url.trim().lowercase()
         val urlHash = MessageDigest.getInstance("MD5").digest(clean.toByteArray()).joinToString("") { "%02x".format(it) }
         return File(context.filesDir, "playlist_cache_$urlHash.m3u")
+    }
+
+    private fun getGroupsCacheFile(context: Context, url: String): File {
+        val clean = url.trim().lowercase()
+        val urlHash = MessageDigest.getInstance("MD5").digest(clean.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(context.filesDir, "groups_cache_$urlHash.json")
+    }
+
+    fun saveKnownGroupsCache(context: Context, url: String, groups: Map<com.example.parser.ItemType, List<String>>) {
+        if (groups.isEmpty() || url.isBlank()) return
+        try {
+            val file = getGroupsCacheFile(context, url)
+            val root = JSONObject()
+            for ((type, list) in groups) {
+                val arr = JSONArray()
+                list.forEach { arr.put(it) }
+                root.put(type.name, arr)
+            }
+            file.writeText(root.toString(), Charsets.UTF_8)
+        } catch (_: Exception) {}
+    }
+
+    fun loadKnownGroupsCache(context: Context, url: String): Map<com.example.parser.ItemType, List<String>> {
+        if (url.isBlank()) return emptyMap()
+        try {
+            val file = getGroupsCacheFile(context, url)
+            if (file.exists() && file.length() > 0L) {
+                val root = JSONObject(file.readText(Charsets.UTF_8))
+                val map = mutableMapOf<com.example.parser.ItemType, List<String>>()
+                for (type in com.example.parser.ItemType.values()) {
+                    val arr = root.optJSONArray(type.name)
+                    if (arr != null) {
+                        val list = mutableListOf<String>()
+                        for (i in 0 until arr.length()) {
+                            list.add(arr.getString(i))
+                        }
+                        if (list.isNotEmpty()) {
+                            map[type] = list
+                        }
+                    }
+                }
+                return map
+            }
+        } catch (_: Exception) {}
+        return emptyMap()
     }
 
     fun hasCacheForUrl(context: Context, url: String): Boolean {
@@ -168,29 +215,68 @@ object PlaylistRepository {
                 _isDialogDismissed.value = false
                 _isLoading.value = true
                 _loadStep.value = PlaylistLoadStep.PROCESSING
-                _loadingDetail.value = "Kategoriler ve ilk yayınlar hazırlanıyor..."
+                _loadingDetail.value = "Kategoriler ve yayınlar hazırlanıyor..."
                 _loadingProgress.value = 35
 
+                val cacheFile = getCacheFile(context, cleanUrl)
+
+                // 1. Önce cihazdaki kayıtlı buket kategorilerini ve yayın önbelleğini anında (<100ms) yükle
+                val cachedGroups = loadKnownGroupsCache(context, cleanUrl)
+                if (cachedGroups.isNotEmpty()) {
+                    _knownGroups.value = cachedGroups
+                }
+
+                if (!forceRefresh && cacheFile.exists() && cacheFile.length() > 0L) {
+                    try {
+                        val cachedPreview = M3uParser.scanPreviewAndCategories(cacheFile)
+                        if (cachedPreview.previewItems.isNotEmpty()) {
+                            if (_knownGroups.value.isEmpty()) {
+                                _knownGroups.value = cachedPreview.categoriesByType
+                            }
+                            _playlist.value = cachedPreview.previewItems
+                            currentLoadedUrl = cleanUrl
+                            _isDialogDismissed.value = true
+                            _loadStep.value = PlaylistLoadStep.PROCESSING
+                            _loadingProgress.value = 70
+                            _loadingDetail.value = "${cachedPreview.previewItems.size} yayın önbellekten hazır..."
+                        }
+                    } catch (_: Exception) {}
+                }
+
                 try {
-                    // İlk part: Canlı, Film ve Dizilerden ilk 10'ar kategori (topCount = 10)
-                    val preview = XtreamCodesApi.initializeCategoriesAndPreview(context, xtreamCreds, topCount = 10)
-                    if (preview.categoriesByType.isNotEmpty()) {
-                        _knownGroups.value = preview.categoriesByType
-                        _playlist.value = preview.previewItems
+                    // API'den toplu (bulk) tek isteklerle canlı, film ve dizileri güvenli ve bansız şekilde çek
+                    val preview = XtreamCodesApi.initializeCategoriesAndPreview(context, xtreamCreds)
+                    if (preview.categoriesByType.isNotEmpty() || preview.previewItems.isNotEmpty()) {
+                        if (preview.categoriesByType.isNotEmpty()) {
+                            _knownGroups.value = preview.categoriesByType
+                            saveKnownGroupsCache(context, cleanUrl, preview.categoriesByType)
+                        }
+                        if (preview.previewItems.isNotEmpty()) {
+                            _playlist.value = preview.previewItems
+                            // Listeyi diske kalıcı olarak kaydet (geçici ban veya sunucu kesintilerinde liste asla kaybolmaz!)
+                            saveXtreamToM3uCache(context, cleanUrl, preview.previewItems)
+                        }
                         currentLoadedUrl = cleanUrl
-                        // 100 MB indirme YOK! İlk part (Canlı, Film, Dizi ilk 10 kategori) çekildi ve anasayfa anında açıldı!
                         _isDialogDismissed.value = true
                         _loadStep.value = PlaylistLoadStep.COMPLETED
                         _loadingProgress.value = 100
-                        _loadingDetail.value = "${preview.previewItems.size} yayın hazır"
+                        _loadingDetail.value = "${_playlist.value.size} yayın hazır"
                         _isLoading.value = false
-
-                        // Arka planda kalan kategorileri peyderpey çekmeye devam et
-                        startBackgroundCategorySync(context, xtreamCreds)
                         return@withLock
                     }
                 } catch (e: Throwable) {
                     e.printStackTrace()
+                }
+
+                // Eğer sunucu geçici ban/rate limit (429) vermişse veya ağ hatası varsa, önbellekten yüklenen liste korunur!
+                if (_playlist.value.isNotEmpty()) {
+                    currentLoadedUrl = cleanUrl
+                    _isDialogDismissed.value = true
+                    _loadStep.value = PlaylistLoadStep.COMPLETED
+                    _loadingProgress.value = 100
+                    _loadingDetail.value = "${_playlist.value.size} yayın (önbellek) hazır"
+                    _isLoading.value = false
+                    return@withLock
                 }
             }
 
@@ -344,12 +430,17 @@ object PlaylistRepository {
         val known = if (type != null) {
             _knownGroups.value[type].orEmpty()
         } else {
-            _knownGroups.value.values.flatten().distinct()
+            listOfNotNull(
+                _knownGroups.value[com.example.parser.ItemType.LIVE],
+                _knownGroups.value[com.example.parser.ItemType.MOVIE],
+                _knownGroups.value[com.example.parser.ItemType.SERIES]
+            ).flatten().distinct()
         }
         val fromPlaylist = if (type == null) _playlist.value else _playlist.value.filter { it.type == type }
-        val plGroups = fromPlaylist.mapNotNull { it.group }
+        val plGroups = fromPlaylist.mapNotNull { it.group }.distinct()
+        // API buket sıralamasını birebir koru (A-Z alfabetik sıralamayla bozulmaz)
         val combined = (known + plGroups).distinct()
-        return combined.filter { !hidden.contains(it) }.sorted()
+        return combined.filter { !hidden.contains(it) }
     }
     
     fun getItemsForGroup(group: String?, type: com.example.parser.ItemType? = null): List<M3uItem> {
@@ -369,43 +460,51 @@ object PlaylistRepository {
     private var backgroundSyncJob: kotlinx.coroutines.Job? = null
 
     fun startBackgroundCategorySync(context: Context, creds: XtreamCredentials) {
+        // Artık arka planda yüzlerce kategoriye seri istek atıp sunucudan geçici ban yemiyoruz.
+        // Tüm yayınlar initializeCategoriesAndPreview içinde tek seferde (bulk) güvenli çekiliyor.
         backgroundSyncJob?.cancel()
-        backgroundSyncJob = CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // Priority 1: LIVE categories (canlı kanallar)
-                fetchRemainingCategories(context, creds, com.example.parser.ItemType.LIVE)
-                // Priority 2: MOVIE categories (filmler)
-                fetchRemainingCategories(context, creds, com.example.parser.ItemType.MOVIE)
-                // Priority 3: SERIES categories (diziler)
-                fetchRemainingCategories(context, creds, com.example.parser.ItemType.SERIES)
-            } catch (_: Exception) {}
-        }
+        backgroundSyncJob = null
     }
 
-    private suspend fun fetchRemainingCategories(context: Context, creds: XtreamCredentials, type: com.example.parser.ItemType) {
-        val cats = XtreamCodesApi.getCategories(creds, type)
-        val missing = cats.filter { cat ->
-            !_playlist.value.any { it.type == type && it.group == cat.categoryName }
-        }
-        for (chunk in missing.chunked(3)) {
-            val streams = kotlinx.coroutines.coroutineScope {
-                val jobs = chunk.map { cat ->
-                    async(Dispatchers.IO) {
-                        XtreamCodesApi.getStreamsForCategory(creds, cat.categoryId, cat.categoryName, type, context)
+    fun saveXtreamToM3uCache(context: Context, url: String, items: List<M3uItem>) {
+        if (items.isEmpty() || url.isBlank()) return
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val knownLive = _knownGroups.value[com.example.parser.ItemType.LIVE].orEmpty()
+                val knownVod = _knownGroups.value[com.example.parser.ItemType.MOVIE].orEmpty()
+                val knownSeries = _knownGroups.value[com.example.parser.ItemType.SERIES].orEmpty()
+                val allKnown = knownLive + knownVod + knownSeries
+                val groupOrderMap = allKnown.withIndex().associate { it.value to it.index }
+
+                // Yayınları API buket sırasına göre gruplayarak kaydet
+                val sortedItems = if (groupOrderMap.isNotEmpty()) {
+                    items.sortedBy { item -> groupOrderMap[item.group ?: ""] ?: 999999 }
+                } else {
+                    items
+                }
+
+                val cacheFile = getCacheFile(context, url)
+                val tempFile = File(context.filesDir, "${cacheFile.name}.tmp")
+                tempFile.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writer.write("#EXTM3U\n")
+                    for (item in sortedItems) {
+                        val tvgId = item.tvgId?.let { " tvg-id=\"$it\"" } ?: ""
+                        val tvgName = (item.tvgName ?: item.title).let { " tvg-name=\"$it\"" }
+                        val logo = item.logo?.let { " tvg-logo=\"$it\"" } ?: ""
+                        val group = (item.group ?: "Diğer").let { " group-title=\"$it\"" }
+                        val seasonAttr = item.season?.let { " season=\"$it\"" } ?: ""
+                        val epAttr = item.episode?.let { " episode=\"$it\"" } ?: ""
+                        val seriesAttr = item.seriesName?.let { " series-name=\"$it\"" } ?: ""
+                        writer.write("#EXTINF:-1$tvgId$tvgName$logo$group$seasonAttr$epAttr$seriesAttr,${item.title}\n")
+                        writer.write("${item.url}\n")
                     }
                 }
-                jobs.flatMap { it.await() }
-            }
-            if (streams.isNotEmpty()) {
-                val current = _playlist.value.toMutableList()
-                val existingUrls = current.map { it.url }.toSet()
-                val newItems = streams.filter { !existingUrls.contains(it.url) }
-                if (newItems.isNotEmpty()) {
-                    current.addAll(newItems)
-                    _playlist.value = current
+                if (tempFile.exists() && tempFile.length() > 0L) {
+                    tempFile.renameTo(cacheFile)
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            delay(150)
         }
     }
 
@@ -413,30 +512,29 @@ object PlaylistRepository {
         val xtreamCreds = currentXtreamCredentials ?: XtreamCodesApi.extractCredentials(currentLoadedUrl ?: "", context) ?: return
         if (_typeLoadingStates.value[type] == true) return
 
+        // Eğer bu türün yayınları zaten yüklüyse tekrar istek atıp sunucuyu yorma / ban riski oluşturma
+        if (_playlist.value.any { it.type == type }) return
+
         _typeLoadingStates.value = _typeLoadingStates.value + (type to true)
         withContext(Dispatchers.IO) {
             try {
                 val cats = XtreamCodesApi.getCategories(xtreamCreds, type)
-                val missing = cats.filter { cat ->
-                    !_playlist.value.any { it.type == type && it.group == cat.categoryName }
+                if (cats.isNotEmpty()) {
+                    val currentKnown = _knownGroups.value.toMutableMap()
+                    currentKnown[type] = cats.map { it.categoryName }
+                    _knownGroups.value = currentKnown
+                    saveKnownGroupsCache(context, currentLoadedUrl ?: "", currentKnown)
                 }
-                for (chunk in missing.chunked(4)) {
-                    val streams = kotlinx.coroutines.coroutineScope {
-                        val jobs = chunk.map { cat ->
-                            async(Dispatchers.IO) {
-                                XtreamCodesApi.getStreamsForCategory(xtreamCreds, cat.categoryId, cat.categoryName, type, context)
-                            }
-                        }
-                        jobs.flatMap { it.await() }
-                    }
-                    if (streams.isNotEmpty()) {
-                        val current = _playlist.value.toMutableList()
-                        val existingUrls = current.map { it.url }.toSet()
-                        val newItems = streams.filter { !existingUrls.contains(it.url) }
-                        if (newItems.isNotEmpty()) {
-                            current.addAll(newItems)
-                            _playlist.value = current
-                        }
+                val catsMap = cats.associate { it.categoryId to it.categoryName }
+                val streams = XtreamCodesApi.getAllStreams(xtreamCreds, type, catsMap, context)
+                if (streams.isNotEmpty()) {
+                    val current = _playlist.value.toMutableList()
+                    val existingUrls = current.map { it.url }.toSet()
+                    val newItems = streams.filter { !existingUrls.contains(it.url) }
+                    if (newItems.isNotEmpty()) {
+                        current.addAll(newItems)
+                        _playlist.value = current
+                        saveXtreamToM3uCache(context, currentLoadedUrl ?: "", current)
                     }
                 }
             } catch (e: Exception) {
@@ -474,6 +572,7 @@ object PlaylistRepository {
                         if (newItems.isNotEmpty()) {
                             current.addAll(newItems)
                             _playlist.value = current
+                            saveXtreamToM3uCache(context, currentLoadedUrl ?: "", current)
                         }
                     }
                 }
