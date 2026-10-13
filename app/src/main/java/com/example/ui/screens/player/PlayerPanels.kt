@@ -878,6 +878,7 @@ fun PlayerSidePanel(
     if (showPinDialogForCategory) {
         PinUnlockDialog(
             onUnlock = {
+                val cats = if (isLive) liveCategories else movieCategories
                 val catToUnlock = cats.getOrNull(pendingCategoryIndex)
                 if (catToUnlock != null) {
                     ParentalControlManager.unlockGroupForSession(catToUnlock)

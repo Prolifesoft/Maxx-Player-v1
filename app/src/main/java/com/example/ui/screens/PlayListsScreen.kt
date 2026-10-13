@@ -150,15 +150,23 @@ fun PlayListsScreen(
     LaunchedEffect(playlists) {
         withContext(Dispatchers.IO) {
             for (p in playlists) {
-                val cached = OdooIntegrationManager.playlistExpireDateMap[p.hostUrl]
+                val creds = com.example.model.XtreamCodesApi.extractCredentials(p.hostUrl)
+                val user = p.username.ifBlank { creds?.username.orEmpty() }
+                val pass = p.password.ifBlank { creds?.password.orEmpty() }
+                val host = p.hostUrl.ifBlank { creds?.hostUrl.orEmpty() }
+
+                val cached = com.example.model.XtreamCodesApi.playlistExpireDateCache["$host:$user"]
+                    ?: OdooIntegrationManager.playlistExpireDateMap[p.hostUrl]
                     ?: OdooIntegrationManager.playlistExpireDateMap[p.name]
-                    ?: com.example.model.XtreamCodesApi.playlistExpireDateCache["${p.hostUrl}:${p.username}"]
                 if (cached != null) {
+                    val formatted = com.example.model.XtreamCodesApi.formatDetailedExpiration(cached)
                     withContext(Dispatchers.Main) {
-                        playlistExpireDates[p.hostUrl] = cached
+                        playlistExpireDates[p.hostUrl] = formatted
                     }
-                } else if (p.username.isNotBlank() && p.password.isNotBlank()) {
-                    val fetched = com.example.model.XtreamCodesApi.getPlaylistExpireDate(p.hostUrl, p.username, p.password)
+                }
+
+                if (user.isNotBlank() && pass.isNotBlank()) {
+                    val fetched = com.example.model.XtreamCodesApi.getPlaylistExpireDate(host, user, pass)
                     if (fetched != null) {
                         withContext(Dispatchers.Main) {
                             playlistExpireDates[p.hostUrl] = fetched
@@ -744,19 +752,28 @@ fun PlayListsScreen(
                 ) {
                     items(filteredPlaylists.size) { index ->
                         val playlist = filteredPlaylists[index]
+                        val currentActiveUrl by com.example.model.PlaylistRepository.currentPlaylistUrl.collectAsState()
+                        val lastSavedUrl = remember { com.example.model.PlaylistRepository.getLastUsedPlaylistUrl(context) }
+                        val effectiveActiveUrl = currentActiveUrl ?: lastSavedUrl
+                        val thisPlaylistUrl = remember(playlist) {
+                            com.example.model.PlaylistRepository.buildPlaylistUrl(playlist.hostUrl, playlist.username, playlist.password)
+                        }
+                        val isThisPlaylistActive = thisPlaylistUrl == effectiveActiveUrl
+
                         var isRowFocused by remember { mutableStateOf(false) }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .onFocusChanged { isRowFocused = it.isFocused }
                                 .border(
-                                    width = if (isRowFocused) 3.dp else 0.dp,
-                                    color = if (isRowFocused) RedPrimary else Color.Transparent,
+                                    width = if (isRowFocused) 3.dp else if (isThisPlaylistActive) 1.5.dp else 0.dp,
+                                    color = if (isRowFocused) RedPrimary else if (isThisPlaylistActive) Color(0xFF4CAF50).copy(alpha = 0.6f) else Color.Transparent,
                                     shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onSelectPlaylist(playlist.hostUrl, playlist.username, playlist.password) }
                                 .background(
                                     if (isRowFocused) RedPrimary.copy(alpha = 0.25f)
+                                    else if (isThisPlaylistActive) Color(0xFF132219)
                                     else MaterialTheme.colorScheme.surface,
                                     RoundedCornerShape(12.dp)
                                 )
@@ -779,14 +796,32 @@ fun PlayListsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        playlist.name,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = if (isLandscapeScreen) 14.sp else 16.sp,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            playlist.name,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = if (isLandscapeScreen) 14.sp else 16.sp,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (isThisPlaylistActive) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                color = Color(0xFF2E7D32),
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "AKTİF",
+                                                    color = Color.White,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                     Text(
                                         playlist.hostUrl,
                                         color = Color.Gray,
@@ -799,11 +834,11 @@ fun PlayListsScreen(
 
                             // Bitiş Tarihi Bilgisi (Çalma listesi ismi ile Play simgesi arasında)
                             val specificExpire = playlistExpireDates[playlist.hostUrl]
-                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.hostUrl]
-                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.name]
+                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.hostUrl]?.let { com.example.model.XtreamCodesApi.formatDetailedExpiration(it) }
+                                ?: OdooIntegrationManager.playlistExpireDateMap[playlist.name]?.let { com.example.model.XtreamCodesApi.formatDetailedExpiration(it) }
                             val displayExpiry = when {
                                 !specificExpire.isNullOrBlank() -> specificExpire
-                                !packageExpireDate.isNullOrBlank() -> packageExpireDate!!
+                                !packageExpireDate.isNullOrBlank() -> com.example.model.XtreamCodesApi.formatDetailedExpiration(packageExpireDate!!)
                                 daysRemaining > 0 -> "$daysRemaining gün kaldı"
                                 isPro -> "Süresiz PRO"
                                 else -> "Süresi Doldu"

@@ -24,6 +24,16 @@ object PlayerRepository {
     var lastDashboardSearchQuery: String = ""
     var lastSelectedSeries: List<M3uItem>? = null
 
+    fun clearForNewPlaylist() {
+        currentlyPlayingItem = null
+        currentPlaylist = emptyList()
+        isFavoritesPlaylist = false
+        lastDashboardTabIndex = 0
+        lastDashboardGroupByTab.clear()
+        lastDashboardSearchQuery = ""
+        lastSelectedSeries = null
+    }
+
     fun getSavedPositionMs(url: String): Long {
         val pair = lastPositions[url] ?: return 0L
         val (pos, dur) = pair

@@ -1286,27 +1286,24 @@ private fun DeviceQrIdentityCard(
                             colors = listOf(Color(0xFF14171C), Color(0xFF0E1116))
                         )
                     )
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 8.dp, vertical = 5.dp)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    DeviceHowToPairGuide(isLandscape = true)
-
+                    // Üst/Ana Alan: QR Kod + Cihaz ID ve Eşleşme Şifresi (PIN) Chipleri
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 1.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Sol: QR Kodu (Kompakt 70dp kare, kamera okumasına tam uygun)
+                        // Sol: QR Kodu (Kompakt 72dp kare, kamera okumasına tam uygun)
                         Box(
                             modifier = Modifier
-                                .size(70.dp)
+                                .size(72.dp)
                                 .background(Color.White, RoundedCornerShape(8.dp))
                                 .border(1.dp, RedPrimary.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                                 .padding(3.dp),
@@ -1327,88 +1324,81 @@ private fun DeviceQrIdentityCard(
                             }
                         }
 
-                        // Sağ: Cihaz ID ve Eşleşme Kodu (PIN) Chipleri — Her ikisi de %100 görünür
+                        // Sağ: Cihaz ID ve Eşleşme Şifresi (PIN) Chipleri — Her ikisi de %100 her zaman görünür
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             // Cihaz ID
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            Surface(
+                                onClick = { onCopy("Cihaz ID", displayId) },
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF1E232A),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .tvFocusBorder(RoundedCornerShape(6.dp))
                             ) {
-                                Text(
-                                    text = stringResource(R.string.device_id_tag),
-                                    fontSize = 7.sp,
-                                    color = Color(0xFF94A3B8),
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                                Surface(
-                                    onClick = { onCopy("Cihaz ID", displayId) },
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = Color(0xFF1E232A),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .tvFocusBorder(RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 7.dp, vertical = 2.5.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 7.dp, vertical = 3.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                                        Text(
+                                            text = stringResource(R.string.device_id_tag),
+                                            fontSize = 7.sp,
+                                            color = Color(0xFF94A3B8),
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1
+                                        )
                                         Text(
                                             text = displayId,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 10.sp,
+                                            fontSize = 9.5.sp,
                                             color = Color.White,
                                             softWrap = false,
-                                            maxLines = 1,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            Icons.Default.ContentCopy,
-                                            contentDescription = "Kopyala",
-                                            tint = Color(0xFF90CAF9),
-                                            modifier = Modifier.size(12.dp)
+                                            maxLines = 1
                                         )
                                     }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Kopyala",
+                                        tint = Color(0xFF90CAF9),
+                                        modifier = Modifier.size(12.dp)
+                                    )
                                 }
                             }
 
-                            // Eşleşme Kodu / Cihaz PIN (Eşleşme Şifresi)
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            // Eşleşme Şifresi / Cihaz PIN (Eşleşme Kodu)
+                            Surface(
+                                onClick = { onCopy("Eşleşme Kodu (PIN)", displayKey) },
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF262012),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFCA28).copy(alpha = 0.75f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .tvFocusBorder(RoundedCornerShape(6.dp))
                             ) {
-                                Text(
-                                    text = stringResource(R.string.device_pin_tag),
-                                    fontSize = 7.sp,
-                                    color = Color(0xFFFFCA28),
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
-                                )
-                                Surface(
-                                    onClick = { onCopy("Eşleşme Kodu (PIN)", displayKey) },
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = Color(0xFF262012),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFCA28).copy(alpha = 0.65f)),
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .tvFocusBorder(RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 7.dp, vertical = 2.5.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 7.dp, vertical = 3.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                                        Text(
+                                            text = stringResource(R.string.device_pin_tag),
+                                            fontSize = 7.sp,
+                                            color = Color(0xFFFFCA28),
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
+                                        )
                                         Text(
                                             text = displayKey,
                                             fontFamily = FontFamily.Monospace,
@@ -1417,21 +1407,23 @@ private fun DeviceQrIdentityCard(
                                             letterSpacing = 1.5.sp,
                                             color = Color(0xFFFFCA28),
                                             softWrap = false,
-                                            maxLines = 1,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            Icons.Default.ContentCopy,
-                                            contentDescription = "Kopyala",
-                                            tint = Color(0xFFFFCA28),
-                                            modifier = Modifier.size(12.dp)
+                                            maxLines = 1
                                         )
                                     }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Kopyala",
+                                        tint = Color(0xFFFFCA28),
+                                        modifier = Modifier.size(12.dp)
+                                    )
                                 }
                             }
                         }
                     }
+
+                    // Alt: Kompakt Rehber (Adım 1, 2 ve URL)
+                    DeviceHowToPairGuide(isLandscape = true)
                 }
             }
         }

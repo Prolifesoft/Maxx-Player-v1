@@ -51,8 +51,11 @@ object XtreamCodesApi {
                 .dispatcher(dispatcher)
                 .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
                 .hostnameVerifier { _, _ -> true }
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(25, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .retryOnConnectionFailure(true)
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(45, TimeUnit.SECONDS)
                 .build()
         } catch (_: Exception) {
             OkHttpClient()
@@ -64,14 +67,106 @@ object XtreamCodesApi {
 
     fun isCurrentlyRateLimited(): Boolean = System.currentTimeMillis() < isRateLimitedUntil
 
-    // In-memory cache for category streams: (ItemType to categoryName) -> List<M3uItem>
-    val categoryStreamsCache = ConcurrentHashMap<Pair<ItemType, String>, List<M3uItem>>()
-    // Map of (ItemType to categoryName) -> categoryId
-    val categoryNameToIdMap = ConcurrentHashMap<Pair<ItemType, String>, String>()
-    // In-memory cache for series episodes: seriesId -> List<M3uItem>
+    fun getCredsHash(creds: XtreamCredentials): String {
+        val key = "${creds.hostUrl.trim().lowercase()}:${creds.username.trim().lowercase()}"
+        return try {
+            val md = java.security.MessageDigest.getInstance("MD5")
+            md.digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            key.hashCode().toString()
+        }
+    }
+
+    // In-memory cache for category streams: credsHash_type_categoryName -> List<M3uItem>
+    val categoryStreamsCache = ConcurrentHashMap<String, List<M3uItem>>()
+    // Map of credsHash_type_categoryName -> categoryId
+    val categoryNameToIdMap = ConcurrentHashMap<String, String>()
+    // In-memory cache for series episodes: credsHash_seriesId -> List<M3uItem>
     val seriesEpisodesCache = ConcurrentHashMap<String, List<M3uItem>>()
-    // In-memory cache for playlist expiration dates: hostUrl:username -> formatted date
     val playlistExpireDateCache = ConcurrentHashMap<String, String>()
+
+    fun getCategoryId(creds: XtreamCredentials, type: ItemType, categoryName: String): String? {
+        val key = "${getCredsHash(creds)}_${type.name}_$categoryName"
+        return categoryNameToIdMap[key]
+    }
+
+    fun clearAllCaches(context: Context? = null) {
+        categoryStreamsCache.clear()
+        categoryNameToIdMap.clear()
+        seriesEpisodesCache.clear()
+        playlistExpireDateCache.clear()
+        if (context != null) {
+            try {
+                context.cacheDir.listFiles()?.filter { it.name.startsWith("xtream_") }?.forEach {
+                    try { it.delete() } catch (_: Exception) {}
+                }
+                context.filesDir.listFiles()?.filter { it.name.startsWith("xtream_") }?.forEach {
+                    try { it.delete() } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun formatDetailedExpiration(expRaw: String?): String {
+        if (expRaw.isNullOrBlank() || expRaw == "null" || expRaw == "0") return "Süresiz"
+        val trimmed = expRaw.trim()
+        val nowMs = System.currentTimeMillis()
+
+        val tsSeconds = trimmed.toLongOrNull()?.let { num ->
+            if (num > 100_000_000_000L) num / 1000L else num
+        }
+
+        val targetMs: Long? = if (tsSeconds != null && tsSeconds > 0L) {
+            tsSeconds * 1000L
+        } else {
+            val formats = listOf(
+                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
+            )
+            var parsedDate: java.util.Date? = null
+            for (f in formats) {
+                try {
+                    parsedDate = f.parse(trimmed)
+                    if (parsedDate != null) break
+                } catch (_: Exception) {}
+            }
+            parsedDate?.time
+        }
+
+        if (targetMs != null) {
+            val diffMs = targetMs - nowMs
+            val diffSec = diffMs / 1000L
+            val dateFmt = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+            val formattedDate = dateFmt.format(java.util.Date(targetMs))
+
+            return when {
+                diffSec <= 0 -> "Süresi Doldu ($formattedDate)"
+                diffSec < 60 -> "1 dk kaldı ($formattedDate)"
+                diffSec < 3600 -> {
+                    val mins = diffSec / 60
+                    "$mins dk kaldı ($formattedDate)"
+                }
+                diffSec < 86400 -> {
+                    val hours = diffSec / 3600
+                    val mins = (diffSec % 3600) / 60
+                    if (mins > 0) "$hours sa $mins dk kaldı ($formattedDate)" else "$hours sa kaldı ($formattedDate)"
+                }
+                diffSec < 86400 * 3 -> {
+                    val hours = diffSec / 3600
+                    "$hours saat kaldı ($formattedDate)"
+                }
+                else -> {
+                    val days = diffSec / 86400
+                    "$days gün kaldı ($formattedDate)"
+                }
+            }
+        }
+        return trimmed
+    }
 
     suspend fun getPlaylistExpireDate(hostUrl: String, username: String, password: String): String? = withContext(Dispatchers.IO) {
         val cacheKey = "$hostUrl:$username"
@@ -91,13 +186,7 @@ object XtreamCodesApi {
             val userInfo = obj.optJSONObject("user_info") ?: return@withContext null
             val expRaw = userInfo.optString("exp_date", "").trim()
             if (expRaw.isNotBlank() && expRaw != "null" && expRaw != "0") {
-                val ts = expRaw.toLongOrNull()
-                val formatted = if (ts != null && ts > 0) {
-                    val sdf = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
-                    sdf.format(java.util.Date(ts * 1000L))
-                } else {
-                    expRaw
-                }
+                val formatted = formatDetailedExpiration(expRaw)
                 playlistExpireDateCache[cacheKey] = formatted
                 return@withContext formatted
             }
@@ -139,7 +228,7 @@ object XtreamCodesApi {
                 val matching = playlists.firstOrNull { p ->
                     p.username.isNotBlank() && p.password.isNotBlank() &&
                     (clean.contains(p.username, ignoreCase = true) || clean.contains(p.hostUrl, ignoreCase = true) || p.hostUrl.contains(clean, ignoreCase = true))
-                } ?: playlists.firstOrNull { it.username.isNotBlank() && it.password.isNotBlank() && (it.hostUrl.startsWith("http://", ignoreCase = true) || it.hostUrl.startsWith("https://", ignoreCase = true)) }
+                }
 
                 if (matching != null) {
                     val cleanHost = matching.hostUrl.trim().trimEnd('/')
@@ -169,14 +258,13 @@ object XtreamCodesApi {
             .url(url)
             .header("User-Agent", "IPTVSmartersPro/3.1.5 (Linux; Android 12)")
             .header("Accept", "*/*")
-            .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
             .build()
         return try {
             val response = client.newCall(request).execute()
             if (response.code == 429 || response.code == 503) {
-                // Server rate limit triggered: back off for 15 seconds to avoid IP bans
-                isRateLimitedUntil = System.currentTimeMillis() + 15_000L
+                // Server rate limit triggered: back off for 4 seconds
+                isRateLimitedUntil = System.currentTimeMillis() + 4_000L
                 null
             } else if (response.isSuccessful) {
                 response.body?.string()
@@ -216,7 +304,8 @@ object XtreamCodesApi {
                     i
                 }
                 if (catId.isNotBlank() && catName.isNotBlank()) {
-                    categoryNameToIdMap[type to catName] = catId
+                    val key = "${getCredsHash(creds)}_${type.name}_$catName"
+                    categoryNameToIdMap[key] = catId
                     result.add(XtreamCategory(catId, catName, type, order))
                 }
             }
@@ -237,12 +326,13 @@ object XtreamCodesApi {
         type: ItemType,
         context: Context? = null
     ): List<M3uItem> = withContext(Dispatchers.IO) {
-        val cacheKey = type to categoryName
+        val credsHash = getCredsHash(creds)
+        val cacheKey = "${credsHash}_${type.name}_$categoryName"
         categoryStreamsCache[cacheKey]?.let { return@withContext it }
 
         // Check local disk cache if available
         if (context != null) {
-            val diskFile = File(context.cacheDir, "xtream_${type.name}_$categoryId.json")
+            val diskFile = File(context.cacheDir, "xtream_${credsHash}_${type.name}_$categoryId.json")
             if (diskFile.exists() && diskFile.length() > 0L && System.currentTimeMillis() - diskFile.lastModified() < 3600_000 * 12) {
                 try {
                     val diskJson = diskFile.readText(Charsets.UTF_8)
@@ -265,7 +355,7 @@ object XtreamCodesApi {
 
         if (context != null && jsonStr.isNotBlank()) {
             try {
-                val diskFile = File(context.cacheDir, "xtream_${type.name}_$categoryId.json")
+                val diskFile = File(context.cacheDir, "xtream_${credsHash}_${type.name}_$categoryId.json")
                 diskFile.writeText(jsonStr, Charsets.UTF_8)
             } catch (_: Exception) {}
         }
@@ -364,7 +454,9 @@ object XtreamCodesApi {
         seriesName: String,
         categoryName: String
     ): List<M3uItem> = withContext(Dispatchers.IO) {
-        seriesEpisodesCache[seriesId]?.let { return@withContext it }
+        val credsHash = getCredsHash(creds)
+        val cacheKey = "${credsHash}_$seriesId"
+        seriesEpisodesCache[cacheKey]?.let { return@withContext it }
         val url = "${getApiBaseUrl(creds)}&action=get_series_info&series_id=$seriesId"
         val jsonStr = httpGet(url) ?: return@withContext emptyList()
         val result = mutableListOf<M3uItem>()
@@ -410,7 +502,7 @@ object XtreamCodesApi {
         }
 
         if (result.isNotEmpty()) {
-            seriesEpisodesCache[seriesId] = result
+            seriesEpisodesCache[cacheKey] = result
         }
         return@withContext result
     }
@@ -421,7 +513,8 @@ object XtreamCodesApi {
         categoryMap: Map<String, String>,
         context: Context? = null
     ): List<M3uItem> = withContext(Dispatchers.IO) {
-        val diskFile = if (context != null) File(context.filesDir, "xtream_${type.name}_all.json") else null
+        val credsHash = getCredsHash(creds)
+        val diskFile = if (context != null) File(context.cacheDir, "xtream_${credsHash}_${type.name}_all.json") else null
         // Check disk cache (valid for 6 hours)
         if (diskFile != null && diskFile.exists() && diskFile.length() > 0L) {
             val age = System.currentTimeMillis() - diskFile.lastModified()

@@ -177,12 +177,13 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             if (playlists.isNotEmpty()) {
-                                                val first = playlists.first()
-                                                val urlToLoad = if (first.username.isEmpty() && first.password.isEmpty()) {
-                                                    first.hostUrl
+                                                val lastUsed = PlaylistRepository.getLastUsedPlaylistUrl(this@MainActivity)
+                                                val target = if (lastUsed != null) {
+                                                    playlists.firstOrNull { PlaylistRepository.buildPlaylistUrl(it.hostUrl, it.username, it.password) == lastUsed } ?: playlists.first()
                                                 } else {
-                                                    "${first.hostUrl}/get.php?username=${first.username}&password=${first.password}&type=m3u_plus&output=mpegts"
+                                                    playlists.first()
                                                 }
+                                                val urlToLoad = PlaylistRepository.buildPlaylistUrl(target.hostUrl, target.username, target.password)
                                                 navController.navigate(NavRoutes.DASHBOARD) {
                                                     popUpTo(NavRoutes.DEVICE_INFO) { inclusive = true }
                                                     launchSingleTop = true
@@ -328,14 +329,18 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     },
-                                    onSelectPlaylist = { host, user, pass -> 
+                                    onSelectPlaylist = { host, user, pass ->
                                         scope.launch {
-                                            val urlToLoad = if (user.isEmpty() && pass.isEmpty()) host else "$host/get.php?username=$user&password=$pass&type=m3u_plus&output=mpegts"
-                                            navController.navigate(NavRoutes.DASHBOARD) {
-                                                popUpTo(NavRoutes.PLAYLISTS) { inclusive = false }
-                                                launchSingleTop = true
+                                            val urlToLoad = PlaylistRepository.buildPlaylistUrl(host, user, pass)
+                                            PlaylistRepository.prepareForNewPlaylist(this@MainActivity, urlToLoad)
+                                            val popped = navController.popBackStack(NavRoutes.DASHBOARD, inclusive = false)
+                                            if (!popped) {
+                                                navController.navigate(NavRoutes.DASHBOARD) {
+                                                    popUpTo(NavRoutes.PLAYLISTS) { inclusive = true }
+                                                    launchSingleTop = true
+                                                }
                                             }
-                                            PlaylistRepository.loadPlaylist(this@MainActivity, urlToLoad)
+                                            PlaylistRepository.loadPlaylist(this@MainActivity, urlToLoad, forceRefresh = true)
                                             if (PlaylistRepository.error.value != null && PlaylistRepository.playlist.value.isEmpty()) {
                                                 android.widget.Toast.makeText(this@MainActivity, PlaylistRepository.error.value, android.widget.Toast.LENGTH_LONG).show()
                                             }

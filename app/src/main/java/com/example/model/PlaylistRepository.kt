@@ -62,6 +62,9 @@ object PlaylistRepository {
     private val _isDialogDismissed = MutableStateFlow(false)
     val isDialogDismissed: StateFlow<Boolean> = _isDialogDismissed
 
+    private val _currentPlaylistUrl = MutableStateFlow<String?>(null)
+    val currentPlaylistUrl: StateFlow<String?> = _currentPlaylistUrl
+
     fun dismissLoadingDialog() {
         _isDialogDismissed.value = true
     }
@@ -70,6 +73,58 @@ object PlaylistRepository {
     var currentXtreamCredentials: XtreamCredentials? = null
     private val loadingCategories = java.util.concurrent.ConcurrentHashMap<Pair<com.example.parser.ItemType, String>, Boolean>()
     private val loadMutex = Mutex()
+
+    fun prepareForNewPlaylist(context: Context, newUrl: String) {
+        val cleanUrl = newUrl.trim()
+        saveLastUsedPlaylistUrl(context, cleanUrl)
+        currentLoadedUrl = null
+        _currentPlaylistUrl.value = cleanUrl
+        currentXtreamCredentials = null
+        _playlist.value = emptyList()
+        _knownGroups.value = emptyMap()
+        _categoryLoadingStates.value = emptySet()
+        _typeLoadingStates.value = emptyMap()
+        _error.value = null
+        _loadStep.value = PlaylistLoadStep.CONNECTING
+        _loadingProgress.value = 15
+        _loadingDetail.value = "Yeni çalma listesi anlık çekiliyor..."
+        _isDialogDismissed.value = false
+        _isLoading.value = true
+        PlayerRepository.clearForNewPlaylist()
+        XtreamCodesApi.clearAllCaches(context)
+        cleanOldPlaylistCaches(context, keepUrl = cleanUrl)
+    }
+
+    fun cleanOldPlaylistCaches(context: Context, keepUrl: String? = null) {
+        try {
+            val keepHash = keepUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                val clean = url.trim().lowercase()
+                MessageDigest.getInstance("MD5").digest(clean.toByteArray()).joinToString("") { "%02x".format(it) }
+            }
+            val files = context.filesDir.listFiles()
+            if (files != null) {
+                for (f in files) {
+                    val name = f.name
+                    if (name.startsWith("playlist_cache_") || name.startsWith("groups_cache_") || name.endsWith(".m3u.tmp") || name.startsWith("xtream_")) {
+                        if (keepHash == null || !name.contains(keepHash)) {
+                            try { f.delete() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
+            val cacheFiles = context.cacheDir.listFiles()
+            if (cacheFiles != null) {
+                for (f in cacheFiles) {
+                    val name = f.name
+                    if (name.startsWith("xtream_") || name.endsWith(".download")) {
+                        if (keepHash == null || !name.contains(keepHash)) {
+                            try { f.delete() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
 
     fun buildPlaylistUrl(hostUrl: String, username: String, password: String): String {
         val cleanHost = hostUrl.trim().trimEnd('/')
@@ -135,14 +190,9 @@ object PlaylistRepository {
     }
 
     fun hasCacheForUrl(context: Context, url: String): Boolean {
-        if (url.isBlank()) {
-            val anyCache = context.filesDir.listFiles { f -> f.name.startsWith("playlist_cache_") && f.name.endsWith(".m3u") && f.length() > 0L }
-            return !anyCache.isNullOrEmpty()
-        }
+        if (url.isBlank()) return false
         val file = getCacheFile(context, url)
-        if (file.exists() && file.length() > 0L) return true
-        val anyCache = context.filesDir.listFiles { f -> f.name.startsWith("playlist_cache_") && f.name.endsWith(".m3u") && f.length() > 0L }
-        return !anyCache.isNullOrEmpty()
+        return file.exists() && file.length() > 0L
     }
 
     fun saveLastUsedPlaylistUrl(context: Context, url: String) {
@@ -174,7 +224,8 @@ object PlaylistRepository {
             val savedLast = getLastUsedPlaylistUrl(context)
 
             when {
-                savedLast != null && (dbUrls.contains(savedLast) || hasCacheForUrl(context, savedLast)) -> savedLast
+                savedLast != null && dbUrls.contains(savedLast) -> savedLast
+                savedLast != null && hasCacheForUrl(context, savedLast) -> savedLast
                 dbUrls.isNotEmpty() -> {
                     val cachedDbUrl = dbUrls.firstOrNull { hasCacheForUrl(context, it) }
                     cachedDbUrl ?: dbUrls.first()
@@ -188,8 +239,9 @@ object PlaylistRepository {
         val cleanUrl = url.trim()
         if (cleanUrl.isBlank()) return
         saveLastUsedPlaylistUrl(context, cleanUrl)
+        _currentPlaylistUrl.value = cleanUrl
 
-        // If already loaded in memory for the same URL and not forcing refresh, return immediately
+        // If already loaded in memory for the exact same URL and not forcing refresh, return immediately
         if (!forceRefresh && currentLoadedUrl == cleanUrl && _playlist.value.isNotEmpty()) {
             _error.value = null
             _loadStep.value = PlaylistLoadStep.COMPLETED
@@ -205,107 +257,58 @@ object PlaylistRepository {
                 return@withLock
             }
 
-            if (_isLoading.value && !forceRefresh) return@withLock
+            // Çalma listeleri arasında geçişte önceki liste temizlenir ve eski önbelleklerin birikmesi engellenir
+            if (currentLoadedUrl != cleanUrl || forceRefresh) {
+                _playlist.value = emptyList()
+                _knownGroups.value = emptyMap()
+                currentLoadedUrl = null
+                currentXtreamCredentials = null
+                _categoryLoadingStates.value = emptySet()
+                _typeLoadingStates.value = emptyMap()
+                _error.value = null
+                PlayerRepository.clearForNewPlaylist()
+                XtreamCodesApi.clearAllCaches(context)
+                cleanOldPlaylistCaches(context, keepUrl = cleanUrl)
+            }
+
+            _isDialogDismissed.value = false
+            _isLoading.value = true
             _error.value = null
 
-            // Xtream Codes API Mode: Önce Xtream Codes JSON API (player_api.php) dene
-            val xtreamCreds = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl)
-            if (xtreamCreds != null) {
-                currentXtreamCredentials = XtreamCredentials(xtreamCreds.baseUrl, xtreamCreds.username, xtreamCreds.password)
-                _isDialogDismissed.value = false
-                _isLoading.value = true
+            val cacheFile = getCacheFile(context, cleanUrl)
+
+            // Xtream Codes API Mode: player_api.php ile hızlı API entegrasyonu (buket sırasını korur)
+            val parsedCreds = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl)
+                ?: XtreamCodesApi.extractCredentials(cleanUrl, context)
+            if (parsedCreds != null) {
+                currentXtreamCredentials = XtreamCredentials(parsedCreds.baseUrl, parsedCreds.username, parsedCreds.password)
                 _loadStep.value = PlaylistLoadStep.PROCESSING
-                _loadingDetail.value = "Kategoriler ve yayınlar hazırlanıyor..."
-                _loadingProgress.value = 35
+                _loadingDetail.value = "Kategoriler ve buketler API ile alınıyor..."
+                _loadingProgress.value = 25
 
-                val cacheFile = getCacheFile(context, cleanUrl)
-
-                // 1. Önce cihazdaki kayıtlı buket kategorilerini ve yayın önbelleğini anında (<100ms) yükle
-                val cachedGroups = loadKnownGroupsCache(context, cleanUrl)
-                if (cachedGroups.isNotEmpty()) {
-                    _knownGroups.value = cachedGroups
-                }
-
-                if (!forceRefresh && cacheFile.exists() && cacheFile.length() > 0L) {
-                    try {
-                        val cachedPreview = M3uParser.scanPreviewAndCategories(cacheFile)
-                        if (cachedPreview.previewItems.isNotEmpty()) {
-                            if (_knownGroups.value.isEmpty()) {
-                                _knownGroups.value = cachedPreview.categoriesByType
-                            }
-                            _playlist.value = cachedPreview.previewItems
-                            currentLoadedUrl = cleanUrl
-                            _isDialogDismissed.value = true
-                            _loadStep.value = PlaylistLoadStep.PROCESSING
-                            _loadingProgress.value = 70
-                            _loadingDetail.value = "${cachedPreview.previewItems.size} yayın önbellekten hazır..."
-                        }
-
-                        // Önbellekteki tüm kanalları arka planda hızlıca yükle
-                        val fullList = M3uParser.parseFromFileProgressive(
-                            file = cacheFile,
-                            onBatchParsed = { batch ->
-                                if (_playlist.value.size < batch.size) {
-                                    _playlist.value = batch
-                                }
-                            },
-                            onProgress = { pct, detail ->
-                                _loadingProgress.value = pct
-                                _loadingDetail.value = detail
-                            }
-                        )
-                        if (fullList.isNotEmpty()) {
-                            _playlist.value = fullList
-                            currentLoadedUrl = cleanUrl
-                            _loadStep.value = PlaylistLoadStep.COMPLETED
-                            _loadingProgress.value = 100
-                            _loadingDetail.value = "${fullList.size} yayın hazır"
-                            _isLoading.value = false
-                            return@withLock
-                        }
-                    } catch (_: Exception) {}
-                }
-
+                // ANLIK LİSTE ÇEKME: Xtream Codes JSON API (buket sıralaması korunur)
                 try {
-                    // İlk yükleme veya yenileme: Xtream JSON API (player_api.php) üzerinden paralel hızlı indirme
-                    val apiItems = com.example.parser.XtreamApiClient.fetchViaApi(xtreamCreds) { pct, msg ->
-                        _loadingProgress.value = pct
-                        _loadingDetail.value = msg
-                    }
-                    if (!apiItems.isNullOrEmpty()) {
-                        val liveGroups = mutableListOf<String>()
-                        val movieGroups = mutableListOf<String>()
-                        val seriesGroups = mutableListOf<String>()
-                        val liveSeen = mutableSetOf<String>()
-                        val movieSeen = mutableSetOf<String>()
-                        val seriesSeen = mutableSetOf<String>()
+                    _loadStep.value = PlaylistLoadStep.DOWNLOADING
+                    _loadingDetail.value = "Kategoriler ve yayınlar sunucudan alınıyor..."
+                    val previewResult = XtreamCodesApi.initializeCategoriesAndPreview(context, currentXtreamCredentials!!)
+                    val hasCats = previewResult.categoriesByType.values.any { it.isNotEmpty() }
+                    val hasItems = previewResult.previewItems.isNotEmpty()
 
-                        for (item in apiItems) {
-                            val g = item.group
-                            if (!g.isNullOrBlank()) {
-                                when (item.type) {
-                                    com.example.parser.ItemType.LIVE -> if (liveSeen.add(g)) liveGroups.add(g)
-                                    com.example.parser.ItemType.MOVIE -> if (movieSeen.add(g)) movieGroups.add(g)
-                                    com.example.parser.ItemType.SERIES -> if (seriesSeen.add(g)) seriesGroups.add(g)
-                                }
-                            }
+                    if (hasCats || hasItems) {
+                        _knownGroups.value = previewResult.categoriesByType
+                        saveKnownGroupsCache(context, cleanUrl, previewResult.categoriesByType)
+
+                        _playlist.value = previewResult.previewItems
+                        if (hasItems) {
+                            saveXtreamToM3uCache(context, cleanUrl, previewResult.previewItems)
                         }
 
-                        val groupsMap = mapOf(
-                            com.example.parser.ItemType.LIVE to liveGroups,
-                            com.example.parser.ItemType.MOVIE to movieGroups,
-                            com.example.parser.ItemType.SERIES to seriesGroups
-                        )
-                        _knownGroups.value = groupsMap
-                        saveKnownGroupsCache(context, cleanUrl, groupsMap)
-
-                        _playlist.value = apiItems
-                        saveXtreamToM3uCache(context, cleanUrl, apiItems)
                         currentLoadedUrl = cleanUrl
                         _isDialogDismissed.value = true
                         _loadStep.value = PlaylistLoadStep.COMPLETED
                         _loadingProgress.value = 100
-                        _loadingDetail.value = "${apiItems.size} yayın hazır"
+                        val totalCats = previewResult.categoriesByType.values.sumOf { it.size }
+                        _loadingDetail.value = "$totalCats kategori ve ${previewResult.previewItems.size} yayın hazır"
                         _isLoading.value = false
                         return@withLock
                     }
@@ -313,34 +316,17 @@ object PlaylistRepository {
                     e.printStackTrace()
                 }
 
-                // Eğer önbellekte yayın varsa ve API başarısızsa önbelleği koru
-                if (_playlist.value.isNotEmpty()) {
-                    currentLoadedUrl = cleanUrl
-                    _isDialogDismissed.value = true
-                    _loadStep.value = PlaylistLoadStep.COMPLETED
-                    _loadingProgress.value = 100
-                    _loadingDetail.value = "${_playlist.value.size} yayın (önbellek) hazır"
-                    _isLoading.value = false
-                    return@withLock
-                }
-                // API null veya boş döndü -> Otomatik olarak M3U (get.php) indirme yöntemine düş (fallback)
+                // Xtream API boş döndüyse veya hata verdiyse M3U indirme akışına devam et
             }
 
-            val cacheFile = getCacheFile(context, cleanUrl)
-            val hasLocalCache = !forceRefresh && (cacheFile.exists() && cacheFile.length() > 0L)
-            val targetCacheFile = if (hasLocalCache) {
-                cacheFile
-            } else if (!forceRefresh) {
-                val anyCache = context.filesDir.listFiles { f -> f.name.startsWith("playlist_cache_") && f.name.endsWith(".m3u") && f.length() > 0L }
-                anyCache?.maxByOrNull { it.lastModified() } ?: cacheFile
-            } else {
-                cacheFile
+                // Xtream API boş döndüyse veya hata verdiyse M3U indirme akışına devam et
             }
 
-            // Stage 1 (Cache Mode): If cache exists on disk, load preview and categories instantly (<100ms)
-            if (!forceRefresh && targetCacheFile.exists() && targetCacheFile.length() > 0L) {
+            // M3U / HLS / Standart Akış İndirme Modu
+            // SADECE ve SADECE bu URL'nin kendi önbelleği varsa (asla başka listenin dosyası yüklenmez)
+            if (!forceRefresh && cacheFile.exists() && cacheFile.length() > 0L) {
                 try {
-                    val preview = M3uParser.scanPreviewAndCategories(targetCacheFile)
+                    val preview = M3uParser.scanPreviewAndCategories(cacheFile)
                     if (preview.previewItems.isNotEmpty()) {
                         _knownGroups.value = preview.categoriesByType
                         _playlist.value = preview.previewItems
@@ -351,9 +337,8 @@ object PlaylistRepository {
                         _loadingDetail.value = "${preview.previewItems.size} yayın hazır..."
                     }
 
-                    // Background full parsing
                     val fullList = M3uParser.parseFromFileProgressive(
-                        file = targetCacheFile,
+                        file = cacheFile,
                         onBatchParsed = { batch ->
                             if (_playlist.value.size < batch.size) {
                                 _playlist.value = batch
@@ -373,10 +358,6 @@ object PlaylistRepository {
                         _loadingProgress.value = 100
                         _loadingDetail.value = "${fullList.size} kanal hazır"
                         _isLoading.value = false
-
-                        if (targetCacheFile != cacheFile) {
-                            try { targetCacheFile.copyTo(cacheFile, overwrite = true) } catch (_: Throwable) {}
-                        }
                         return@withLock
                     }
                 } catch (e: Throwable) {
@@ -384,15 +365,11 @@ object PlaylistRepository {
                 }
             }
 
-            // Stage 2 (Network Download Mode):
-            // 1. Download file fast to cacheFile with real-time download progress
-            // 2. The moment download finishes, immediately scan balanced preview (first 10 items for EVERY Live, Movie, Series category)
-            // 3. Immediately dismiss loading dialog and open Anasayfa (Live, Movies, and Series are all populated and NOT empty!)
-            // 4. Background parser completes all remaining items from disk without blocking!
+            // Canlı/Anlık İndirme Modu (Network Download)
             _isDialogDismissed.value = false
             _isLoading.value = true
             _loadStep.value = PlaylistLoadStep.CONNECTING
-            _loadingProgress.value = 5
+            _loadingProgress.value = 10
             _loadingDetail.value = "Sunucuya bağlanılıyor..."
 
             try {
@@ -419,7 +396,6 @@ object PlaylistRepository {
                     return@withLock
                 }
 
-                // Initial fast stage: extract category names & initial representative batch (first 10 items for Live, Movies, Series per category)
                 _loadStep.value = PlaylistLoadStep.PROCESSING
                 _loadingDetail.value = "Kategoriler ve yayınlar hazırlanıyor..."
                 val preview = M3uParser.scanPreviewAndCategories(cacheFile, maxPerCategory = 10)
@@ -427,14 +403,12 @@ object PlaylistRepository {
                     _knownGroups.value = preview.categoriesByType
                     _playlist.value = preview.previewItems
                     currentLoadedUrl = cleanUrl
-                    // ILK PART ÇEKİLDİ (Canlı, Film ve Diziler dolu): DİREK ANASAYFA GELİR, YÜKLENİYOR KISMI GİZLENİR!
                     _isDialogDismissed.value = true
                     _loadStep.value = PlaylistLoadStep.PROCESSING
                     _loadingProgress.value = 50
                     _loadingDetail.value = "${preview.previewItems.size} yayın hazır..."
                 }
 
-                // Background full loading continues without blocking the user
                 val fullList = M3uParser.parseFromFileProgressive(
                     file = cacheFile,
                     onBatchParsed = { batch ->
@@ -614,7 +588,7 @@ object PlaylistRepository {
         _categoryLoadingStates.value = _categoryLoadingStates.value + cacheKey
         withContext(Dispatchers.IO) {
             try {
-                var catId = XtreamCodesApi.categoryNameToIdMap[cacheKey]
+                var catId = XtreamCodesApi.getCategoryId(xtreamCreds, type, groupName)
                 if (catId == null) {
                     val cats = XtreamCodesApi.getCategories(xtreamCreds, type)
                     catId = cats.find { it.categoryName == groupName }?.categoryId

@@ -382,6 +382,24 @@ fun DashboardScreen(
     var selectedGroup by remember(selectedTabIndex) {
         mutableStateOf(com.example.model.PlayerRepository.lastDashboardGroupByTab[selectedTabIndex])
     }
+
+    val currentActivePlaylistUrl by PlaylistRepository.currentPlaylistUrl.collectAsState()
+    var lastObservedPlaylistUrl by remember { mutableStateOf(currentActivePlaylistUrl) }
+    LaunchedEffect(currentActivePlaylistUrl) {
+        if (currentActivePlaylistUrl != null && currentActivePlaylistUrl != lastObservedPlaylistUrl) {
+            lastObservedPlaylistUrl = currentActivePlaylistUrl
+            selectedGroup = null
+            searchQuery = ""
+            selectedTabIndex = 0
+            com.example.model.PlayerRepository.clearForNewPlaylist()
+        }
+    }
+    LaunchedEffect(displayGroups) {
+        val grp = selectedGroup
+        if (grp != null && displayGroups.isNotEmpty() && !displayGroups.contains(grp)) {
+            selectedGroup = null
+        }
+    }
     LaunchedEffect(selectedTabIndex, selectedGroup) {
         val grp = selectedGroup
         if (grp != null) {
@@ -527,6 +545,7 @@ fun DashboardScreen(
                 itemToUnlock = null
                 playlistForUnlock = null
                 if (item != null) {
+                    com.example.model.ParentalControlManager.unlockChannelForSession(item.url)
                     if (pl != null) {
                         playWithPlaylist(item, pl)
                     } else {
@@ -2523,8 +2542,14 @@ fun DashboardScreen(
                                                     else Color.Transparent
                                                 )
                                                 .clickable {
-                                                    selectedGroup = group
-                                                    showCategoryDrawer = false
+                                                    val isGroupLocked = com.example.model.ParentalControlManager.isGroupLocked(group)
+                                                    if (isGroupLocked) {
+                                                        sidePanelGroupToUnlock = group
+                                                        showCategoryDrawer = false
+                                                    } else {
+                                                        selectedGroup = group
+                                                        showCategoryDrawer = false
+                                                    }
                                                 }
                                                 .padding(horizontal = 12.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically,

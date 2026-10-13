@@ -56,7 +56,6 @@ object M3uParser {
             .url(url)
             .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
-            .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
             .build()
         val tempFile = java.io.File(targetFile.parentFile, "${targetFile.name}.download")
@@ -139,7 +138,6 @@ object M3uParser {
             .url(url)
             .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
-            .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
             .build()
         val tempFile = java.io.File(targetFile.parentFile, "${targetFile.name}.download")
@@ -524,7 +522,6 @@ object M3uParser {
             .url(url)
             .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
-            .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
             .build()
         try {
@@ -627,7 +624,6 @@ object M3uParser {
             .url(url)
             .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
-            .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
             .build()
         try {
