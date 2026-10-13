@@ -114,8 +114,18 @@ fun HeroBanner(
             .clickable(onClick = onClick)
             .background(Color(0xFF0F0F17))
     ) {
+        val favoriteUrls by com.example.model.FavoritesManager.favoriteUrls.collectAsState()
+        val isFavorite = favoriteUrls.contains(item.url)
+        val lockedChannels by com.example.model.ParentalControlManager.lockedChannels.collectAsState()
+        val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+        val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+        val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
+        val hasPin = com.example.model.ParentalControlManager.pinCode.collectAsState().value != null
+        val isLocked = com.example.model.ParentalControlManager.isItemLocked(item)
+        var showUnlockDialog by remember { mutableStateOf(false) }
+
         androidx.compose.animation.Crossfade(
-            targetState = activeBackdropUrl,
+            targetState = if (isLocked) null else activeBackdropUrl,
             animationSpec = androidx.compose.animation.core.tween(durationMillis = 700),
             modifier = Modifier.fillMaxSize(),
             label = "hero_backdrop_slide"
@@ -149,14 +159,6 @@ fun HeroBanner(
                 )
         )
 
-        val favoriteUrls by com.example.model.FavoritesManager.favoriteUrls.collectAsState()
-        val isFavorite = favoriteUrls.contains(item.url)
-        val lockedChannels by com.example.model.ParentalControlManager.lockedChannels.collectAsState()
-        val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
-        val hasPin = com.example.model.ParentalControlManager.pinCode.collectAsState().value != null
-        val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
-        var showUnlockDialog by remember { mutableStateOf(false) }
-
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -169,7 +171,7 @@ fun HeroBanner(
                     .padding(end = 16.dp)
             ) {
                 Text(
-                    text = item.title,
+                    text = if (isLocked) com.example.model.ParentalControlManager.maskTitle(item.title) else item.title,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White,
@@ -208,12 +210,10 @@ fun HeroBanner(
 
                     IconButton(
                         onClick = {
-                            if (!hasPin) {
-                                Toast.makeText(context, context.getString(R.string.parental_control_desc), Toast.LENGTH_SHORT).show()
-                            } else if (isLocked) {
+                            if (isLocked) {
                                 showUnlockDialog = true
                             } else {
-                                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                                 Toast.makeText(context, context.getString(R.string.parental_channel_locked), Toast.LENGTH_SHORT).show()
                             }
                         },
@@ -273,7 +273,7 @@ fun HeroBanner(
         if (showUnlockDialog) {
             com.example.ui.components.PinUnlockDialog(
                 onUnlock = {
-                    com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                    com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                     showUnlockDialog = false
                     Toast.makeText(context, context.getString(R.string.parental_channel_unlocked), Toast.LENGTH_SHORT).show()
                 },
@@ -307,8 +307,10 @@ fun MovieCard(
     val isFavorite = favoriteUrls.contains(item.url)
     val lockedChannels by com.example.model.ParentalControlManager.lockedChannels.collectAsState()
     val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+    val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+    val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
     val hasPin = com.example.model.ParentalControlManager.pinCode.collectAsState().value != null
-    val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
+    val isLocked = com.example.model.ParentalControlManager.isItemLocked(item)
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
@@ -337,7 +339,22 @@ fun MovieCard(
                     .background(Color(0xFF080F19)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
+                if (isLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .background(Color(0xFF261922), CircleShape)
+                            .border(2.dp, Color(0xFFEF5350).copy(alpha = 0.65f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Kilitli İçerik",
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                } else if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -387,10 +404,10 @@ fun MovieCard(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = item.title,
+                    text = if (isLocked) com.example.model.ParentalControlManager.maskTitle(item.title) else item.title,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
+                    color = if (isLocked) Color(0xFFB0BEC5) else Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
@@ -418,12 +435,10 @@ fun MovieCard(
 
                     IconButton(
                         onClick = {
-                            if (!hasPin) {
-                                Toast.makeText(context, context.getString(R.string.parental_control_desc), Toast.LENGTH_SHORT).show()
-                            } else if (isLocked) {
+                            if (isLocked) {
                                 showUnlockDialog = true
                             } else {
-                                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                                 Toast.makeText(context, context.getString(R.string.parental_channel_locked), Toast.LENGTH_SHORT).show()
                             }
                         },
@@ -462,7 +477,7 @@ fun MovieCard(
     if (showUnlockDialog) {
         com.example.ui.components.PinUnlockDialog(
             onUnlock = {
-                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                 showUnlockDialog = false
                 Toast.makeText(context, context.getString(R.string.parental_channel_unlocked), Toast.LENGTH_SHORT).show()
             },
@@ -493,8 +508,10 @@ fun ChannelCard(
     val isFavorite = favoriteUrls.contains(item.url)
     val lockedChannels by com.example.model.ParentalControlManager.lockedChannels.collectAsState()
     val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+    val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+    val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
     val hasPin = com.example.model.ParentalControlManager.pinCode.collectAsState().value != null
-    val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
+    val isLocked = com.example.model.ParentalControlManager.isItemLocked(item)
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
@@ -530,7 +547,22 @@ fun ChannelCard(
                     .background(Color(0xFF080F19)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
+                if (isLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(Color(0xFF261922), CircleShape)
+                            .border(1.5.dp, Color(0xFFEF5350).copy(alpha = 0.65f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Kilitli Kanal",
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -560,10 +592,10 @@ fun ChannelCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = item.title,
+                text = if (isLocked) com.example.model.ParentalControlManager.maskTitle(item.title) else item.title,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (isLocked) Color(0xFFB0BEC5) else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -593,12 +625,10 @@ fun ChannelCard(
 
                 IconButton(
                     onClick = {
-                        if (!hasPin) {
-                            Toast.makeText(context, context.getString(R.string.parental_control_desc), Toast.LENGTH_SHORT).show()
-                        } else if (isLocked) {
+                        if (isLocked) {
                             showUnlockDialog = true
                         } else {
-                            com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                            com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                             Toast.makeText(context, context.getString(R.string.parental_channel_locked), Toast.LENGTH_SHORT).show()
                         }
                     },
@@ -638,7 +668,7 @@ fun ChannelCard(
     if (showUnlockDialog) {
         com.example.ui.components.PinUnlockDialog(
             onUnlock = {
-                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                 showUnlockDialog = false
                 Toast.makeText(context, context.getString(R.string.parental_channel_unlocked), Toast.LENGTH_SHORT).show()
             },
@@ -673,8 +703,10 @@ fun SeriesCard(
     val isFavorite = favoriteUrls.contains(item.url)
     val lockedChannels by com.example.model.ParentalControlManager.lockedChannels.collectAsState()
     val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+    val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+    val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
     val hasPin = com.example.model.ParentalControlManager.pinCode.collectAsState().value != null
-    val isLocked = hasPin && (lockedChannels.contains(item.url) || lockedGroups.contains(item.group))
+    val isLocked = com.example.model.ParentalControlManager.isItemLocked(item)
     var showUnlockDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
@@ -704,7 +736,22 @@ fun SeriesCard(
                     .background(Color(0xFF080F19)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
+                if (isLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .background(Color(0xFF261922), CircleShape)
+                            .border(2.dp, Color(0xFFEF5350).copy(alpha = 0.65f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Kilitli Dizi",
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                } else if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.logo)
@@ -750,9 +797,9 @@ fun SeriesCard(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = seriesName,
+                    text = if (isLocked) com.example.model.ParentalControlManager.maskTitle(seriesName) else seriesName,
                     fontSize = 11.sp,
-                    color = Color.White,
+                    color = if (isLocked) Color(0xFFB0BEC5) else Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.SemiBold,
@@ -781,12 +828,10 @@ fun SeriesCard(
 
                     IconButton(
                         onClick = {
-                            if (!hasPin) {
-                                Toast.makeText(context, context.getString(R.string.parental_control_desc), Toast.LENGTH_SHORT).show()
-                            } else if (isLocked) {
+                            if (isLocked) {
                                 showUnlockDialog = true
                             } else {
-                                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                                 Toast.makeText(context, context.getString(R.string.parental_channel_locked), Toast.LENGTH_SHORT).show()
                             }
                         },
@@ -825,7 +870,7 @@ fun SeriesCard(
     if (showUnlockDialog) {
         com.example.ui.components.PinUnlockDialog(
             onUnlock = {
-                com.example.model.ParentalControlManager.toggleChannelLock(item.url)
+                com.example.model.ParentalControlManager.toggleChannelLock(item.url, item.title, item.group)
                 showUnlockDialog = false
                 Toast.makeText(context, context.getString(R.string.parental_channel_unlocked), Toast.LENGTH_SHORT).show()
             },

@@ -558,7 +558,7 @@ fun DashboardScreen(
                 val grp = sidePanelGroupToUnlock
                 sidePanelGroupToUnlock = null
                 if (grp != null) {
-                    com.example.model.ParentalControlManager.toggleGroupLock(grp)
+                    com.example.model.ParentalControlManager.unlockGroupForSession(grp)
                     selectedGroup = grp
                     Toast.makeText(context, context.getString(R.string.parental_channel_unlocked), Toast.LENGTH_SHORT).show()
                 }
@@ -2380,6 +2380,8 @@ fun DashboardScreen(
                     val pinCodeVal by com.example.model.ParentalControlManager.pinCode.collectAsState()
                     val hasPin = pinCodeVal != null
                     val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+                    val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+                    val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
                     var groupToUnlock by remember { mutableStateOf<String?>(null) }
 
                     if (groupToUnlock != null) {
@@ -2545,13 +2547,11 @@ fun DashboardScreen(
                                                     fontSize = 13.sp,
                                                     modifier = Modifier.padding(end = 8.dp)
                                                 )
-                                                val isGroupLocked = hasPin && lockedGroups.contains(group)
+                                                val isGroupLocked = com.example.model.ParentalControlManager.isGroupLocked(group)
 
                                                 IconButton(
                                                     onClick = {
-                                                        if (!hasPin) {
-                                                            Toast.makeText(context, context.getString(R.string.parental_control_desc), Toast.LENGTH_SHORT).show()
-                                                        } else if (isGroupLocked) {
+                                                        if (isGroupLocked) {
                                                             groupToUnlock = group
                                                         } else {
                                                             com.example.model.ParentalControlManager.toggleGroupLock(group)
@@ -3647,6 +3647,8 @@ fun DashboardCategorySidePanel(
     onRequestUnlock: (String) -> Unit = {}
 ) {
     val lockedGroups by com.example.model.ParentalControlManager.lockedGroups.collectAsState()
+    val explicitlyUnlockedGroups by com.example.model.ParentalControlManager.explicitlyUnlockedGroups.collectAsState()
+    val sessionUnlockedGroups by com.example.model.ParentalControlManager.sessionUnlockedGroups.collectAsState()
     val listState = rememberLazyListState()
 
     LaunchedEffect(selectedGroup) {
@@ -3759,7 +3761,7 @@ fun DashboardCategorySidePanel(
                     val isSelected = selectedGroup == group
                     var isGroupFocused by remember { mutableStateOf(false) }
                     val count = groupCounts[group] ?: 0
-                    val isLocked = lockedGroups.contains(group)
+                    val isLocked = com.example.model.ParentalControlManager.isGroupLocked(group)
 
                     Row(
                         modifier = Modifier

@@ -24,7 +24,9 @@ data class FastPreviewResult(
 )
 
 object M3uParser {
-    private fun getUnsafeOkHttpClient(): OkHttpClient {
+    const val DEFAULT_USER_AGENT = "IPTVSmarters/1.0 (Linux;Android)"
+
+    fun getUnsafeOkHttpClient(): OkHttpClient {
         return try {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -52,7 +54,7 @@ object M3uParser {
         val client = getUnsafeOkHttpClient()
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+            .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
             .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
@@ -99,6 +101,15 @@ object M3uParser {
             }
 
             if (tempFile.exists() && tempFile.length() > 0L) {
+                // Sunucu HTML hata sayfası veya geçersiz veri döndüyse engelle
+                val firstLine = try {
+                    tempFile.bufferedReader(Charsets.UTF_8).use { it.readLine()?.trim().orEmpty() }
+                } catch (_: Exception) { "" }
+                if (!firstLine.startsWith("#EXTM3U") && !firstLine.startsWith("#EXTINF")) {
+                    tempFile.delete()
+                    onProgress(PlaylistLoadStep.ERROR, 0, "Sunucu geçerli bir liste döndürmedi")
+                    return@withContext false
+                }
                 if (targetFile.exists()) targetFile.delete()
                 val renamed = tempFile.renameTo(targetFile)
                 if (!renamed) {
@@ -126,7 +137,7 @@ object M3uParser {
         val client = getUnsafeOkHttpClient()
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+            .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
             .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
@@ -511,7 +522,7 @@ object M3uParser {
         val client = getUnsafeOkHttpClient()
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+            .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept", "*/*")
             .header("Accept-Encoding", "gzip, deflate")
             .header("Connection", "keep-alive")
@@ -523,7 +534,7 @@ object M3uParser {
                 val body = response.body
                 if (body != null) {
                     val contentLength = body.contentLength()
-                    val inputStream = body.byteStream()
+                    val inputStream = body.byteStream().buffered(65536)
 
                     val tempFile = if (targetCacheFile != null) {
                         java.io.File(targetCacheFile.parentFile, "${targetCacheFile.name}.download")
@@ -612,7 +623,13 @@ object M3uParser {
         onProgress: suspend (PlaylistLoadStep, Int, String) -> Unit = { _, _, _ -> }
     ): List<M3uItem> = withContext(Dispatchers.IO) {
         val client = getUnsafeOkHttpClient()
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DEFAULT_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Accept-Encoding", "gzip, deflate")
+            .header("Connection", "keep-alive")
+            .build()
         try {
             onProgress(PlaylistLoadStep.CONNECTING, 5, "")
             val response = client.newCall(request).execute()
@@ -688,6 +705,7 @@ object M3uParser {
         var bytesRead = 0L
         var lineCount = 0
         var lastReportTime = System.currentTimeMillis()
+        var firstLineChecked = false
         
         val seriesPatterns = listOf(
             java.util.regex.Pattern.compile("^(.*?)\\s*S(\\d+)\\s*E(\\d+)(.*)$", java.util.regex.Pattern.CASE_INSENSITIVE),
@@ -701,6 +719,13 @@ object M3uParser {
             lineCount++
             
             var trimmed = line.trim()
+            if (!firstLineChecked && trimmed.isNotEmpty()) {
+                firstLineChecked = true
+                if (!trimmed.startsWith("#EXTM3U") && !trimmed.startsWith("#EXTINF")) {
+                    onParseProgress(0, "Sunucu geçerli bir liste döndürmedi")
+                    return emptyList()
+                }
+            }
             if (trimmed.startsWith("#EXTM3U#EXTINF:")) {
                 trimmed = trimmed.substring(7)
             }

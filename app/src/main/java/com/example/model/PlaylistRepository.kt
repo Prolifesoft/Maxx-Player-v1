@@ -208,10 +208,10 @@ object PlaylistRepository {
             if (_isLoading.value && !forceRefresh) return@withLock
             _error.value = null
 
-            // Xtream Codes API Mode (400,000 kanallı büyük listelerde 100 MB indirme yapmadan direkt API ile hızlı yükleme)
-            val xtreamCreds = XtreamCodesApi.extractCredentials(cleanUrl, context)
+            // Xtream Codes API Mode: Önce Xtream Codes JSON API (player_api.php) dene
+            val xtreamCreds = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl)
             if (xtreamCreds != null) {
-                currentXtreamCredentials = xtreamCreds
+                currentXtreamCredentials = XtreamCredentials(xtreamCreds.baseUrl, xtreamCreds.username, xtreamCreds.password)
                 _isDialogDismissed.value = false
                 _isLoading.value = true
                 _loadStep.value = PlaylistLoadStep.PROCESSING
@@ -240,27 +240,72 @@ object PlaylistRepository {
                             _loadingProgress.value = 70
                             _loadingDetail.value = "${cachedPreview.previewItems.size} yayın önbellekten hazır..."
                         }
+
+                        // Önbellekteki tüm kanalları arka planda hızlıca yükle
+                        val fullList = M3uParser.parseFromFileProgressive(
+                            file = cacheFile,
+                            onBatchParsed = { batch ->
+                                if (_playlist.value.size < batch.size) {
+                                    _playlist.value = batch
+                                }
+                            },
+                            onProgress = { pct, detail ->
+                                _loadingProgress.value = pct
+                                _loadingDetail.value = detail
+                            }
+                        )
+                        if (fullList.isNotEmpty()) {
+                            _playlist.value = fullList
+                            currentLoadedUrl = cleanUrl
+                            _loadStep.value = PlaylistLoadStep.COMPLETED
+                            _loadingProgress.value = 100
+                            _loadingDetail.value = "${fullList.size} yayın hazır"
+                            _isLoading.value = false
+                            return@withLock
+                        }
                     } catch (_: Exception) {}
                 }
 
                 try {
-                    // API'den toplu (bulk) tek isteklerle canlı, film ve dizileri güvenli ve bansız şekilde çek
-                    val preview = XtreamCodesApi.initializeCategoriesAndPreview(context, xtreamCreds)
-                    if (preview.categoriesByType.isNotEmpty() || preview.previewItems.isNotEmpty()) {
-                        if (preview.categoriesByType.isNotEmpty()) {
-                            _knownGroups.value = preview.categoriesByType
-                            saveKnownGroupsCache(context, cleanUrl, preview.categoriesByType)
+                    // İlk yükleme veya yenileme: Xtream JSON API (player_api.php) üzerinden paralel hızlı indirme
+                    val apiItems = com.example.parser.XtreamApiClient.fetchViaApi(xtreamCreds) { pct, msg ->
+                        _loadingProgress.value = pct
+                        _loadingDetail.value = msg
+                    }
+                    if (!apiItems.isNullOrEmpty()) {
+                        val liveGroups = mutableListOf<String>()
+                        val movieGroups = mutableListOf<String>()
+                        val seriesGroups = mutableListOf<String>()
+                        val liveSeen = mutableSetOf<String>()
+                        val movieSeen = mutableSetOf<String>()
+                        val seriesSeen = mutableSetOf<String>()
+
+                        for (item in apiItems) {
+                            val g = item.group
+                            if (!g.isNullOrBlank()) {
+                                when (item.type) {
+                                    com.example.parser.ItemType.LIVE -> if (liveSeen.add(g)) liveGroups.add(g)
+                                    com.example.parser.ItemType.MOVIE -> if (movieSeen.add(g)) movieGroups.add(g)
+                                    com.example.parser.ItemType.SERIES -> if (seriesSeen.add(g)) seriesGroups.add(g)
+                                }
+                            }
                         }
-                        if (preview.previewItems.isNotEmpty()) {
-                            _playlist.value = preview.previewItems
-                            // Listeyi diske kalıcı olarak kaydet (geçici ban veya sunucu kesintilerinde liste asla kaybolmaz!)
-                            saveXtreamToM3uCache(context, cleanUrl, preview.previewItems)
-                        }
+
+                        val groupsMap = mapOf(
+                            com.example.parser.ItemType.LIVE to liveGroups,
+                            com.example.parser.ItemType.MOVIE to movieGroups,
+                            com.example.parser.ItemType.SERIES to seriesGroups
+                        )
+                        _knownGroups.value = groupsMap
+                        saveKnownGroupsCache(context, cleanUrl, groupsMap)
+
+                        _playlist.value = apiItems
+                        saveXtreamToM3uCache(context, cleanUrl, apiItems)
                         currentLoadedUrl = cleanUrl
                         _isDialogDismissed.value = true
                         _loadStep.value = PlaylistLoadStep.COMPLETED
                         _loadingProgress.value = 100
-                        _loadingDetail.value = "${_playlist.value.size} yayın hazır"
+                        _loadingDetail.value = "${apiItems.size} yayın hazır"
                         _isLoading.value = false
                         return@withLock
                     }
@@ -268,7 +313,7 @@ object PlaylistRepository {
                     e.printStackTrace()
                 }
 
-                // Eğer sunucu geçici ban/rate limit (429) vermişse veya ağ hatası varsa, önbellekten yüklenen liste korunur!
+                // Eğer önbellekte yayın varsa ve API başarısızsa önbelleği koru
                 if (_playlist.value.isNotEmpty()) {
                     currentLoadedUrl = cleanUrl
                     _isDialogDismissed.value = true
@@ -278,6 +323,7 @@ object PlaylistRepository {
                     _isLoading.value = false
                     return@withLock
                 }
+                // API null veya boş döndü -> Otomatik olarak M3U (get.php) indirme yöntemine düş (fallback)
             }
 
             val cacheFile = getCacheFile(context, cleanUrl)
@@ -361,7 +407,12 @@ object PlaylistRepository {
                 )
 
                 if (!downloaded || !cacheFile.exists() || cacheFile.length() == 0L) {
-                    _error.value = "Çalma listesi indirilemedi"
+                    val isXtream = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl) != null
+                    _error.value = if (isXtream) {
+                        context.getString(com.example.R.string.error_server_blocked)
+                    } else {
+                        context.getString(com.example.R.string.error_server_invalid_playlist)
+                    }
                     _loadStep.value = PlaylistLoadStep.ERROR
                     _loadingProgress.value = 0
                     delay(1500)
@@ -405,7 +456,12 @@ object PlaylistRepository {
                     _loadingProgress.value = 100
                     _loadingDetail.value = "${fullList.size} kanal yüklendi"
                 } else if (_playlist.value.isEmpty()) {
-                    _error.value = "Listede yayın bulunamadı"
+                    val isXtream = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl) != null
+                    _error.value = if (isXtream) {
+                        context.getString(com.example.R.string.error_server_blocked)
+                    } else {
+                        context.getString(com.example.R.string.error_server_invalid_playlist)
+                    }
                     _loadStep.value = PlaylistLoadStep.ERROR
                 }
             } catch (e: Throwable) {

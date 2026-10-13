@@ -94,8 +94,10 @@ fun PlayerBottomBar(
         } else 0f
     }
 
+    val isItemLocked = item != null && com.example.model.ParentalControlManager.isItemLocked(item)
+
     // Title formatting
-    val title = remember(item, epPrefix) {
+    val rawTitle = remember(item, epPrefix) {
         when (item?.type) {
             ItemType.LIVE -> item.title
             ItemType.SERIES -> {
@@ -107,6 +109,7 @@ fun PlayerBottomBar(
             else -> item?.title ?: ""
         }
     }
+    val title = if (isItemLocked) com.example.model.ParentalControlManager.maskTitle(rawTitle) else rawTitle
 
     Box(
         modifier = modifier
@@ -180,7 +183,23 @@ fun PlayerBottomBar(
                 ) {
                     // Logo
                     var logoLoadFailed by remember(item?.logo) { mutableStateOf(false) }
-                    if (!item?.logo.isNullOrBlank() && !logoLoadFailed) {
+                    if (isItemLocked) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF261922))
+                                .border(1.5.dp, Color(0xFFEF5350).copy(alpha = 0.65f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Kilitli Kanal",
+                                tint = Color(0xFFEF5350),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    } else if (!item?.logo.isNullOrBlank() && !logoLoadFailed) {
                         AsyncImage(
                             model = item?.logo,
                             contentDescription = item?.title,

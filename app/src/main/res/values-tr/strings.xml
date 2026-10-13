@@ -330,4 +330,6 @@
     <string name="close_btn">Kapat</string>
     <string name="favorite_btn">Favori</string>
     <string name="favorited_btn">Favorilerde</string>
+    <string name="error_server_blocked">Bu sunucudan liste alınamadı. Sunucu geçici olarak erişimi engellemiş olabilir.</string>
+    <string name="error_server_invalid_playlist">Sunucu geçerli bir liste döndürmedi</string>
 </resources>

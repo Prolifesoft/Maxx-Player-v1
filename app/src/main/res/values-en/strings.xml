@@ -328,4 +328,6 @@
     <string name="close_btn">Close</string>
     <string name="favorite_btn">Favorite</string>
     <string name="favorited_btn">In Favorites</string>
+    <string name="error_server_blocked">Failed to fetch playlist from this server. The server may have temporarily blocked access.</string>
+    <string name="error_server_invalid_playlist">The server did not return a valid playlist</string>
 </resources>

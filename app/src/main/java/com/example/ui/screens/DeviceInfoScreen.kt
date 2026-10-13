@@ -32,11 +32,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -229,12 +233,12 @@ fun DeviceInfoScreen(
                 val isLandscapeLayout = maxWidth > maxHeight
 
                 if (isLandscapeLayout) {
-                    // Yatay / Geniş Ekran / TV Düzeni (Üst ve alttan 15dp azaltılmış güvenli yerleşim)
+                    // Yatay / Geniş Ekran / TV Düzeni (Kompakt güvenli yerleşim)
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 18.dp, bottom = 18.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                            .padding(top = 6.dp, bottom = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         DeviceScreenHeader(
                             onBack = onBack,
@@ -332,7 +336,8 @@ fun DeviceInfoScreen(
                             activePlaylistCount = activePlaylistCount,
                             lastSyncTime = portalLastSyncTime,
                             statusDetailText = portalCheckStatusText,
-                            onSyncClick = sendDeviceToPortalAction
+                            onSyncClick = sendDeviceToPortalAction,
+                            isLandscape = true
                         )
                     }
                 } else {
@@ -978,8 +983,150 @@ private fun DeviceAccountCard(
 }
 
 /**
+ * QR Kod Üstü "NASIL YAPILIR?" Bilgilendirme ve Rehber Bölümü
+ * - Adım 1: QR kodu okutma
+ * - Adım 2: Google hesabı ile giriş yapma
+ * - Manuel Giriş: https:// (yeşil) maxxplayers.com/my/maxx tarayıcı adresi
+ */
+@Composable
+private fun DeviceHowToPairGuide(
+    isLandscape: Boolean = false
+) {
+    val titleFontSize = if (isLandscape) 9.5.sp else 11.5.sp
+    val stepFontSize = if (isLandscape) 8.5.sp else 9.5.sp
+    val manualFontSize = if (isLandscape) 8.sp else 9.sp
+    val iconSize = if (isLandscape) 13.dp else 15.dp
+    val googleLogoSize = if (isLandscape) 12.dp else 14.dp
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = Color(0xFF191D24),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = if (isLandscape) 3.5.dp else 8.dp)
+    ) {
+        // Üst Başlık: "NASIL YAPILIR?" ve Sağda Google Rozeti
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.HelpOutline,
+                    contentDescription = null,
+                    tint = Color(0xFF64B5F6),
+                    modifier = Modifier.size(iconSize)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "NASIL YAPILIR?",
+                    fontSize = titleFontSize,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    letterSpacing = 0.5.sp
+                )
+            }
+
+            // Google ile Giriş Rozeti
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = if (isLandscape) 5.dp else 6.dp, vertical = if (isLandscape) 1.5.dp else 2.dp)
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_google_logo),
+                    contentDescription = "Google",
+                    modifier = Modifier.size(googleLogoSize)
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                    text = "Google ile Giriş",
+                    fontSize = if (isLandscape) 7.sp else 8.5.sp,
+                    color = Color(0xFFE2E8F0),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(if (isLandscape) 2.dp else 5.dp))
+
+        if (isLandscape) {
+            // Yatay modda kompakt 2 satır: Adımlar yan yana, manuel URL tek satır
+            Text(
+                text = "• 1: QR kodu okutun   • 2: Web'de Google ile giriş yapın",
+                fontSize = 7.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFE2E8F0),
+                lineHeight = 9.5.sp,
+                maxLines = 1
+            )
+
+            val manualSpan = buildAnnotatedString {
+                append("• Manuel Giriş: Tarayıcıya ")
+                withStyle(SpanStyle(color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)) {
+                    append("https://")
+                }
+                withStyle(SpanStyle(color = Color(0xFF90CAF9), fontWeight = FontWeight.Bold)) {
+                    append("maxxplayers.com/my/maxx")
+                }
+                append(" yazın.")
+            }
+            Text(
+                text = manualSpan,
+                fontSize = 7.sp,
+                color = Color(0xFF94A3B8),
+                lineHeight = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        } else {
+            // Dikey Ekran Görünümü
+            Text(
+                text = "• ADIM 1: Cihazı kaydetmek için QR kodu okutun.",
+                fontSize = stepFontSize,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFE2E8F0),
+                lineHeight = 13.5.sp
+            )
+            Text(
+                text = "• ADIM 2: Açılan web sayfasında Google ile giriş yapın.",
+                fontSize = stepFontSize,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFE2E8F0),
+                lineHeight = 13.5.sp
+            )
+
+            // Manuel Giriş Bilgisi: https:// yeşil renkli vurgulanır
+            val manualSpan = buildAnnotatedString {
+                append("• Manuel Giriş: Tarayıcı URL kısmına ")
+                withStyle(SpanStyle(color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)) {
+                    append("https://")
+                }
+                withStyle(SpanStyle(color = Color(0xFF90CAF9), fontWeight = FontWeight.Bold)) {
+                    append("maxxplayers.com/my/maxx")
+                }
+                append(" yazın.")
+            }
+            Text(
+                text = manualSpan,
+                fontSize = manualFontSize,
+                color = Color(0xFF94A3B8),
+                lineHeight = 12.5.sp,
+                modifier = Modifier.padding(top = 1.dp)
+            )
+        }
+    }
+}
+
+/**
  * 5. QR + Kimlik Kartı (TEK birleşik kart)
- * Üstte: "QR kodu okutarak web portalını aç" (8sp, ortalanmış)
+ * Üstte: "NASIL YAPILIR?" Rehber Bölümü
  * Sol: QR Kodu (~80-90dp kare, beyaz zemin, 8dp köşe, RedPrimary alfa kenarlık)
  * Sağ: CİHAZ ID ve PIN chipleri (monospace, kopyala ikonu, kesilmez)
  */
@@ -1006,15 +1153,9 @@ private fun DeviceQrIdentityCard(
                 .border(1.dp, Color(0xFF23262C), RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            Text(
-                text = stringResource(R.string.qr_open_web_portal),
-                fontSize = 10.sp,
-                color = Color(0xFF8B8E93),
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-            )
+            DeviceHowToPairGuide(isLandscape = false)
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1145,42 +1286,30 @@ private fun DeviceQrIdentityCard(
                             colors = listOf(Color(0xFF14171C), Color(0xFF0E1116))
                         )
                     )
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.qr_open_web_portal),
-                        fontSize = 8.sp,
-                        color = Color(0xFF94A3B8),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    DeviceHowToPairGuide(isLandscape = true)
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .padding(top = 1.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Sol: QR Kodu
+                        // Sol: QR Kodu (Kompakt 70dp kare, kamera okumasına tam uygun)
                         Box(
                             modifier = Modifier
-                                .sizeIn(
-                                    minWidth = 72.dp,
-                                    maxWidth = 88.dp,
-                                    minHeight = 72.dp,
-                                    maxHeight = 88.dp
-                                )
-                                .aspectRatio(1f)
+                                .size(70.dp)
                                 .background(Color.White, RoundedCornerShape(8.dp))
                                 .border(1.dp, RedPrimary.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                                .padding(4.dp),
+                                .padding(3.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             if (qrBitmap != null) {
@@ -1192,25 +1321,25 @@ private fun DeviceQrIdentityCard(
                             } else {
                                 CircularProgressIndicator(
                                     color = RedPrimary,
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier.size(20.dp),
                                     strokeWidth = 2.dp
                                 )
                             }
                         }
 
-                        // Sağ: Cihaz ID ve Eşleşme Kodu (PIN) Chipleri
+                        // Sağ: Cihaz ID ve Eşleşme Kodu (PIN) Chipleri — Her ikisi de %100 görünür
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)
+                            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)
                         ) {
                             // Cihaz ID
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.device_id_tag),
-                                    fontSize = 7.5.sp,
+                                    fontSize = 7.sp,
                                     color = Color(0xFF94A3B8),
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1
@@ -1219,7 +1348,7 @@ private fun DeviceQrIdentityCard(
                                     onClick = { onCopy("Cihaz ID", displayId) },
                                     shape = RoundedCornerShape(6.dp),
                                     color = Color(0xFF1E232A),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .tvFocusBorder(RoundedCornerShape(6.dp))
@@ -1227,7 +1356,7 @@ private fun DeviceQrIdentityCard(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                                            .padding(horizontal = 7.dp, vertical = 3.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1235,7 +1364,7 @@ private fun DeviceQrIdentityCard(
                                             text = displayId,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 10.5.sp,
+                                            fontSize = 10.sp,
                                             color = Color.White,
                                             softWrap = false,
                                             maxLines = 1,
@@ -1246,20 +1375,20 @@ private fun DeviceQrIdentityCard(
                                             Icons.Default.ContentCopy,
                                             contentDescription = "Kopyala",
                                             tint = Color(0xFF90CAF9),
-                                            modifier = Modifier.size(13.dp)
+                                            modifier = Modifier.size(12.dp)
                                         )
                                     }
                                 }
                             }
 
-                            // Eşleşme Kodu / Cihaz PIN
+                            // Eşleşme Kodu / Cihaz PIN (Eşleşme Şifresi)
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.device_pin_tag),
-                                    fontSize = 7.5.sp,
+                                    fontSize = 7.sp,
                                     color = Color(0xFFFFCA28),
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1
@@ -1268,7 +1397,7 @@ private fun DeviceQrIdentityCard(
                                     onClick = { onCopy("Eşleşme Kodu (PIN)", displayKey) },
                                     shape = RoundedCornerShape(6.dp),
                                     color = Color(0xFF262012),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFCA28).copy(alpha = 0.55f)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFCA28).copy(alpha = 0.65f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .tvFocusBorder(RoundedCornerShape(6.dp))
@@ -1276,7 +1405,7 @@ private fun DeviceQrIdentityCard(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                                            .padding(horizontal = 7.dp, vertical = 3.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1284,7 +1413,7 @@ private fun DeviceQrIdentityCard(
                                             text = displayKey,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 12.5.sp,
+                                            fontSize = 11.5.sp,
                                             letterSpacing = 1.5.sp,
                                             color = Color(0xFFFFCA28),
                                             softWrap = false,
@@ -1296,7 +1425,7 @@ private fun DeviceQrIdentityCard(
                                             Icons.Default.ContentCopy,
                                             contentDescription = "Kopyala",
                                             tint = Color(0xFFFFCA28),
-                                            modifier = Modifier.size(13.dp)
+                                            modifier = Modifier.size(12.dp)
                                         )
                                     }
                                 }
@@ -1426,7 +1555,8 @@ private fun DevicePortalRegistrationStatusBar(
     activePlaylistCount: Int,
     lastSyncTime: String?,
     statusDetailText: String?,
-    onSyncClick: () -> Unit
+    onSyncClick: () -> Unit,
+    isLandscape: Boolean = false
 ) {
     val bgColor = when {
         isChecking -> Color(0xFF14243B)
@@ -1453,7 +1583,7 @@ private fun DevicePortalRegistrationStatusBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 7.dp),
+                .padding(horizontal = 10.dp, vertical = if (isLandscape) 4.dp else 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -1464,7 +1594,7 @@ private fun DevicePortalRegistrationStatusBar(
                 if (isChecking) {
                     CircularProgressIndicator(
                         color = accentColor,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(if (isLandscape) 15.dp else 18.dp),
                         strokeWidth = 2.dp
                     )
                 } else {
@@ -1472,7 +1602,7 @@ private fun DevicePortalRegistrationStatusBar(
                         imageVector = if (isRegistered) Icons.Default.Verified else Icons.Default.Info,
                         contentDescription = null,
                         tint = accentColor,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(if (isLandscape) 17.dp else 20.dp)
                     )
                 }
 
@@ -1487,7 +1617,7 @@ private fun DevicePortalRegistrationStatusBar(
                         },
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 10.5.sp,
+                        fontSize = if (isLandscape) 9.5.sp else 10.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1508,9 +1638,9 @@ private fun DevicePortalRegistrationStatusBar(
                     Text(
                         text = summaryLine,
                         color = Color(0xFFCBD5E1),
-                        fontSize = 8.5.sp,
-                        maxLines = 2,
-                        lineHeight = 11.sp,
+                        fontSize = if (isLandscape) 8.sp else 8.5.sp,
+                        maxLines = if (isLandscape) 1 else 2,
+                        lineHeight = if (isLandscape) 10.sp else 11.sp,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1527,19 +1657,19 @@ private fun DevicePortalRegistrationStatusBar(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = if (isLandscape) 3.5.dp else 5.dp)
                 ) {
                     Icon(
                         Icons.Default.Sync,
                         contentDescription = "Şimdi Eşitle",
                         tint = accentColor,
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(12.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = stringResource(R.string.btn_check_sync_short),
                         color = Color.White,
-                        fontSize = 9.5.sp,
+                        fontSize = if (isLandscape) 8.5.sp else 9.5.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -1569,7 +1699,7 @@ private fun DevicePortalRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(30.dp)
+            .height(26.dp)
             .background(Color(0xFF14171C), RoundedCornerShape(8.dp))
             .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
             .clickable {
@@ -1593,11 +1723,21 @@ private fun DevicePortalRow(
                 color = Color(0xFF94A3B8),
                 fontWeight = FontWeight.Normal
             )
+            val portalDisplayUrl = webPortalUrl.ifBlank { "https://maxxplayers.com/my/maxx" }
+            val portalAnnotated = buildAnnotatedString {
+                withStyle(SpanStyle(color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)) {
+                    append("https://")
+                }
+                withStyle(SpanStyle(color = Color(0xFF64B5F6), fontWeight = FontWeight.SemiBold)) {
+                    val rest = if (portalDisplayUrl.startsWith("https://")) portalDisplayUrl.removePrefix("https://")
+                               else if (portalDisplayUrl.startsWith("http://")) portalDisplayUrl.removePrefix("http://")
+                               else portalDisplayUrl
+                    append(rest)
+                }
+            }
             Text(
-                text = webPortalUrl.removePrefix("https://").removePrefix("http://"),
+                text = portalAnnotated,
                 fontSize = 9.sp,
-                color = Color(0xFF64B5F6),
-                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

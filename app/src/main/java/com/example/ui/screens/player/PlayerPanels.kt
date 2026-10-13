@@ -878,6 +878,10 @@ fun PlayerSidePanel(
     if (showPinDialogForCategory) {
         PinUnlockDialog(
             onUnlock = {
+                val catToUnlock = cats.getOrNull(pendingCategoryIndex)
+                if (catToUnlock != null) {
+                    ParentalControlManager.unlockGroupForSession(catToUnlock)
+                }
                 currentCategoryIndex = pendingCategoryIndex
                 showPinDialogForCategory = false
             },
@@ -892,6 +896,7 @@ fun PlayerSidePanel(
         PinUnlockDialog(
             onUnlock = {
                 pendingPlayItem?.let {
+                    ParentalControlManager.unlockChannelForSession(it.url)
                     onPlayItem(it, pendingPlayList)
                     onClose()
                 }
@@ -945,7 +950,23 @@ private fun TvChannelRowItem(
     ) {
         // Sol logo (40dp)
         var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
-        if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
+        if (isLocked) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF261922))
+                    .border(1.dp, Color(0xFFEF5350).copy(alpha = 0.65f), RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Kilitli Kanal",
+                    tint = Color(0xFFEF5350),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        } else if (!item.logo.isNullOrBlank() && !logoLoadFailed) {
             AsyncImage(
                 model = item.logo,
                 contentDescription = item.title,
@@ -972,11 +993,14 @@ private fun TvChannelRowItem(
 
         Spacer(modifier = Modifier.width(10.dp))
 
+        val finalDisplayName = if (isLocked) ParentalControlManager.maskTitle(displayName) else displayName
+
         Text(
-            text = displayName,
+            text = finalDisplayName,
             color = when {
                 isFocused -> Color.White
                 isSelected -> RedPrimary
+                isLocked -> Color(0xFFB0BEC5)
                 else -> Color.White
             },
             fontWeight = if (isSelected || isFocused) FontWeight.ExtraBold else FontWeight.Normal,

@@ -123,6 +123,8 @@
     <string name="parental_wrong_answer">Hatalı Cevap!</string>
     <string name="parental_unlock">Kilidi Aç</string>
     <string name="parental_save">Kaydet</string>
+    <string name="parental_default_pin_hint">Varsayılan PIN: 0000</string>
+    <string name="parental_adult_locked_hint">Yetişkin / +18 içerik kilitlidir</string>
 
     <!-- Account Management & Support -->
     <string name="account_management">HESAP YÖNETİMİ</string>
@@ -330,4 +332,6 @@
     <string name="close_btn">Kapat</string>
     <string name="favorite_btn">Favori</string>
     <string name="favorited_btn">Favorilerde</string>
+    <string name="error_server_blocked">Bu sunucudan liste alınamadı. Sunucu geçici olarak erişimi engellemiş olabilir.</string>
+    <string name="error_server_invalid_playlist">Sunucu geçerli bir liste döndürmedi</string>
 </resources>

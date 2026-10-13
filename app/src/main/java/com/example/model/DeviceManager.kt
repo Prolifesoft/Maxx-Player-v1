@@ -466,7 +466,7 @@ object DeviceManager {
 
     private const val DEFAULT_ODOO_SERVER = "https://maxxplayers.com"
     private const val PACKAGE_SHOP_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
-    private const val WEB_PORTAL_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
+    private const val WEB_PORTAL_URL = "https://maxxplayers.com/my/maxx"
     private const val MAGAZA_URL = "https://maxxplayers.com/shop/category/maxx-players-web-player-paket-3"
 
     fun getOdooServerUrl(): String {
@@ -484,14 +484,14 @@ object DeviceManager {
 
     fun getPackageShopUrl(): String = PACKAGE_SHOP_URL
     fun getMagazaUrl(): String = PACKAGE_SHOP_URL
-    fun getQrUrl(): String = PACKAGE_SHOP_URL
+    fun getQrUrl(): String = WEB_PORTAL_URL
 
     fun getMyDevicesUrl(): String {
         val server = getOdooServerUrl().trimEnd('/')
         return "$server/my/devices"
     }
 
-    fun getWebPortalUrl(): String = PACKAGE_SHOP_URL
+    fun getWebPortalUrl(): String = WEB_PORTAL_URL
 
     fun setCurrentUser(id: String, name: String, email: String, photoUrl: String? = null) {
         prefs.edit()

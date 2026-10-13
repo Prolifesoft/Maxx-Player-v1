@@ -48,6 +48,15 @@ fun PinVerifyDialog(isLocking: Boolean = false, onSuccess: () -> Unit, onDismiss
         },
         text = {
             Column {
+                if (currentPin == null) {
+                    Text(
+                        text = stringResource(R.string.parental_default_pin_hint),
+                        color = Color(0xFFFFB300),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
                 OutlinedTextField(
                     value = inputPin,
                     onValueChange = { inputPin = it; pinError = false },
@@ -77,7 +86,8 @@ fun PinVerifyDialog(isLocking: Boolean = false, onSuccess: () -> Unit, onDismiss
         confirmButton = {
             Button(
                 onClick = {
-                    if (inputPin == currentPin) {
+                    val validPin = currentPin ?: ParentalControlManager.DEFAULT_PIN
+                    if (inputPin == validPin) {
                         onSuccess()
                     } else {
                         pinError = true
