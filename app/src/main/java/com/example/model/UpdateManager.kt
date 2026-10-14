@@ -62,6 +62,23 @@ object UpdateManager {
         }
     }
 
+    private fun isSemanticVersionNewer(serverVer: String, currentVer: String): Boolean {
+        try {
+            val sClean = serverVer.trim().removePrefix("v").removePrefix("V")
+            val cClean = currentVer.trim().removePrefix("v").removePrefix("V")
+            val sParts = sClean.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+            val cParts = cClean.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+            val maxLen = maxOf(sParts.size, cParts.size)
+            for (i in 0 until maxLen) {
+                val s = sParts.getOrElse(i) { 0 }
+                val c = cParts.getOrElse(i) { 0 }
+                if (s > c) return true
+                if (s < c) return false
+            }
+        } catch (_: Exception) {}
+        return false
+    }
+
     suspend fun checkForUpdates(context: Context, manual: Boolean = false) = withContext(Dispatchers.IO) {
         _isChecking.value = true
         _errorMsg.value = null
@@ -69,94 +86,103 @@ object UpdateManager {
 
         val currentVersionCode = BuildConfig.VERSION_CODE
         val currentVersionName = BuildConfig.VERSION_NAME
+        val odooServer = DeviceManager.getOdooServerUrl().trimEnd('/')
 
-        try {
-            val url = URL(ENDPOINT)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 8000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                setRequestProperty("Accept", "application/json")
-            }
+        val endpointsToTry = linkedSetOf(
+            "$odooServer/api/v1/release/latest",
+            "https://maxxplayers.com/api/v1/release/latest",
+            "$odooServer/api/release/latest",
+            "$odooServer/maxx/api/release/latest"
+        )
 
-            val params = JSONObject().apply {
-                put("version_code", currentVersionCode)
-                put("version_name", currentVersionName)
-            }
-            val payload = JSONObject().apply {
-                put("jsonrpc", "2.0")
-                put("method", "call")
-                put("params", params)
-            }
+        var foundResponse = false
 
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
-            val responseCode = conn.responseCode
-
-            if (responseCode in 200..299) {
-                val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                conn.disconnect()
-
-                if (responseStr.isBlank()) {
-                    if (manual) {
-                        _upToDateMessage.value = "Uygulamanız güncel (v$currentVersionName)"
-                    }
-                    return@withContext
+        for (endpoint in endpointsToTry) {
+            try {
+                val url = URL(endpoint)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    setRequestProperty("Accept", "application/json")
                 }
 
-                val rootJson = JSONObject(responseStr)
-                val resultObj = rootJson.optJSONObject("result") ?: rootJson
+                val params = JSONObject().apply {
+                    put("version_code", currentVersionCode)
+                    put("version_name", currentVersionName)
+                }
+                val payload = JSONObject().apply {
+                    put("jsonrpc", "2.0")
+                    put("method", "call")
+                    put("params", params)
+                }
 
-                val status = resultObj.optString("status", "success")
-                val serverUpdateAvailable = resultObj.optBoolean("update_available", false)
-                val forceUpdate = resultObj.optBoolean("force_update", false)
-                val serverVersionName = resultObj.optString("version_name", currentVersionName)
-                val serverVersionCode = resultObj.optInt("version_code", currentVersionCode)
-                val rawReleaseNotes = resultObj.optString("release_notes", "")
-                val releaseNotes = cleanHtml(rawReleaseNotes)
-                val downloadUrl = resultObj.optString("download_url", "").trim()
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload.toString()) }
+                val responseCode = conn.responseCode
 
-                // Loop prevention: only consider update available if server version is strictly greater
-                val isActuallyNewer = serverVersionCode > currentVersionCode
-                val updateAvailable = serverUpdateAvailable && isActuallyNewer && downloadUrl.isNotBlank()
+                if (responseCode in 200..299) {
+                    val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    conn.disconnect()
 
-                if (updateAvailable) {
-                    val info = UpdateInfo(
-                        status = status,
-                        updateAvailable = true,
-                        forceUpdate = forceUpdate,
-                        versionName = serverVersionName,
-                        versionCode = serverVersionCode,
-                        releaseNotes = releaseNotes.ifBlank { "Yeni sürüm yayınlandı." },
-                        downloadUrl = downloadUrl
-                    )
-                    _updateInfo.value = info
+                    if (responseStr.isNotBlank()) {
+                        val rootJson = JSONObject(responseStr)
+                        val resultObj = rootJson.optJSONObject("result") ?: rootJson
+
+                        val status = resultObj.optString("status", "success")
+                        val serverUpdateAvailable = resultObj.optBoolean("update_available", false)
+                        val forceUpdate = resultObj.optBoolean("force_update", false)
+                        val serverVersionName = resultObj.optString("version_name", currentVersionName)
+                        val serverVersionCode = resultObj.optInt("version_code", currentVersionCode)
+                        val rawReleaseNotes = resultObj.optString("release_notes", "")
+                        val releaseNotes = cleanHtml(rawReleaseNotes)
+                        var downloadUrl = resultObj.optString("download_url", "").trim()
+
+                        if (downloadUrl.startsWith("http://maxxplayers.com", ignoreCase = true)) {
+                            downloadUrl = downloadUrl.replaceFirst("http://", "https://")
+                        }
+
+                        val isCodeNewer = serverVersionCode > currentVersionCode
+                        val isNameNewer = isSemanticVersionNewer(serverVersionName, currentVersionName)
+                        val isActuallyNewer = isCodeNewer || isNameNewer
+
+                        val updateAvailable = serverUpdateAvailable && (isActuallyNewer || (manual && serverVersionCode >= currentVersionCode)) && downloadUrl.isNotBlank()
+
+                        if (updateAvailable) {
+                            val info = UpdateInfo(
+                                status = status,
+                                updateAvailable = true,
+                                forceUpdate = forceUpdate,
+                                versionName = serverVersionName,
+                                versionCode = serverVersionCode,
+                                releaseNotes = releaseNotes.ifBlank { "Yeni sürüm yayınlandı." },
+                                downloadUrl = downloadUrl
+                            )
+                            _updateInfo.value = info
+                        } else {
+                            _updateInfo.value = null
+                            if (manual) {
+                                _upToDateMessage.value = "Uygulamanız güncel (v$currentVersionName)"
+                            }
+                        }
+                        foundResponse = true
+                        break
+                    }
                 } else {
-                    _updateInfo.value = null
-                    if (manual) {
-                        _upToDateMessage.value = "Uygulamanız güncel (v$currentVersionName)"
-                    }
+                    conn.disconnect()
                 }
-            } else {
-                conn.disconnect()
-                if (manual) {
-                    val message = when (responseCode) {
-                        401 -> "Yetkilendirme hatası (401). Lütfen tekrar giriş yapın."
-                        403 -> "Erişim engellendi (403)."
-                        404 -> "Güncelleme servisine ulaşılamadı (404)."
-                        500 -> "Sunucu hatası oluştu (500). Lütfen daha sonra tekrar deneyin."
-                        else -> "Güncelleme kontrolü başarısız oldu (HTTP $responseCode)."
-                    }
-                    _errorMsg.value = message
-                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed endpoint $endpoint: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Update check network error: ${e.message}")
+        }
+
+        if (!foundResponse) {
+            _isChecking.value = false
             if (manual) {
-                _errorMsg.value = "Güncelleme sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin."
+                _errorMsg.value = "Güncelleme sunucusuna bağlanılamadı veya geçerli bir yanıt alınamadı."
             }
-        } finally {
+        } else {
             _isChecking.value = false
         }
     }
@@ -204,33 +230,68 @@ object UpdateManager {
         _isDownloading.value = true
         _downloadProgress.value = 0
 
+        var currentUrl = if (downloadUrl.startsWith("http://maxxplayers.com", ignoreCase = true)) {
+            downloadUrl.replaceFirst("http://", "https://")
+        } else {
+            downloadUrl
+        }
+
+        var conn: HttpURLConnection? = null
+        var redirectCount = 0
+        val maxRedirects = 5
+
         try {
-            val url = URL(downloadUrl)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20000
-                readTimeout = 25000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Mozilla/5.0 Android MAXX-PLAYER")
+            while (redirectCount < maxRedirects) {
+                val u = URL(currentUrl)
+                val c = (u.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 20000
+                    readTimeout = 30000
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "Mozilla/5.0 Android MAXX-PLAYER")
+                    setRequestProperty("Accept", "*/*")
+                }
+                val code = c.responseCode
+                if (code in listOf(301, 302, 303, 307, 308)) {
+                    val location = c.getHeaderField("Location")
+                    c.disconnect()
+                    if (!location.isNullOrBlank()) {
+                        currentUrl = if (location.startsWith("http://") || location.startsWith("https://")) {
+                            location
+                        } else {
+                            URL(u, location).toString()
+                        }
+                        redirectCount++
+                        continue
+                    }
+                }
+                conn = c
+                break
             }
 
-            val responseCode = conn.responseCode
+            val finalConn = conn ?: run {
+                _isDownloading.value = false
+                _errorMsg.value = "İndirme sunucusuna bağlanılamadı."
+                return@withContext
+            }
+
+            val responseCode = finalConn.responseCode
             if (responseCode !in 200..299) {
-                conn.disconnect()
+                finalConn.disconnect()
                 _isDownloading.value = false
                 _errorMsg.value = "APK indirilemedi (HTTP $responseCode). Bağlantıyı kontrol edin."
                 return@withContext
             }
 
-            val contentType = conn.contentType ?: ""
+            val contentType = finalConn.contentType ?: ""
             if (contentType.contains("text/html", ignoreCase = true) || contentType.startsWith("text/", ignoreCase = true)) {
-                conn.disconnect()
+                finalConn.disconnect()
                 _isDownloading.value = false
                 _errorMsg.value = "İndirilen dosya APK yerine HTML sayfası döndürdü. Lütfen indirme bağlantısını kontrol edin."
                 return@withContext
             }
 
-            val fileLength = conn.contentLength
-            val inputStream = conn.inputStream
+            val fileLength = finalConn.contentLength
+            val inputStream = finalConn.inputStream
 
             val cacheDir = File(context.cacheDir, "updates")
             if (!cacheDir.exists()) cacheDir.mkdirs()
@@ -254,7 +315,7 @@ object UpdateManager {
             outputStream.flush()
             outputStream.close()
             inputStream.close()
-            conn.disconnect()
+            finalConn.disconnect()
 
             // Verification of downloaded file
             if (!apkFile.exists() || apkFile.length() < 5000) {
@@ -303,6 +364,18 @@ object UpdateManager {
 
     private fun installApk(context: Context, apkFile: File) {
         try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    val settingsIntent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${context.packageName}")
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(settingsIntent)
+                }
+            }
+
             val uri: Uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",

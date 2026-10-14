@@ -409,7 +409,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         
-                        PlaylistLoadingDialog()
+                        // PlaylistLoadingDialog kaldırıldı: kullanıcı doğrudan Dashboard'da anlık canlı verileri izler
                         com.example.ui.components.UpdateDialog()
                     }
                 }

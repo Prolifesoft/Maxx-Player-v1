@@ -292,16 +292,10 @@ object XtreamCodesApi {
                 val obj = jsonArray.getJSONObject(i)
                 val catId = obj.optString("category_id", obj.optInt("category_id", 0).toString()).trim()
                 val catName = obj.optString("category_name").trim()
-                val order = if (obj.has("order")) {
-                    val o = obj.optInt("order", i)
-                    if (o != 0 && o != i) hasExplicitNonZeroOrder = true
-                    o
-                } else if (obj.has("category_order")) {
-                    val o = obj.optInt("category_order", i)
-                    if (o != 0 && o != i) hasExplicitNonZeroOrder = true
-                    o
-                } else {
-                    i
+                val order = when {
+                    obj.has("order") -> obj.optInt("order", i)
+                    obj.has("category_order") -> obj.optInt("category_order", i)
+                    else -> i
                 }
                 if (catId.isNotBlank() && catName.isNotBlank()) {
                     val key = "${getCredsHash(creds)}_${type.name}_$catName"
@@ -312,11 +306,8 @@ object XtreamCodesApi {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return@withContext if (hasExplicitNonZeroOrder) {
-            result.sortedBy { it.order }
-        } else {
-            result // Server JSON array order is the exact provider bouquet order
-        }
+        // Sunucunun / buketin gönderdiği orijinal JSON dizi sırasını birebir koru
+        return@withContext result
     }
 
     suspend fun getStreamsForCategory(
@@ -645,7 +636,8 @@ object XtreamCodesApi {
     suspend fun initializeCategoriesAndPreview(
         context: Context,
         creds: XtreamCredentials,
-        topCount: Int = 10
+        topCount: Int = 10,
+        onStreamingBatch: ((categories: Map<ItemType, List<String>>, partialItems: List<M3uItem>, stepDetail: String) -> Unit)? = null
     ): FastPreviewResult = withContext(Dispatchers.IO) {
         // 1. Fetch categories for Live, VOD, and Series sequentially with small pauses to prevent burst bans
         val liveCats = getCategories(creds, ItemType.LIVE)
@@ -665,33 +657,56 @@ object XtreamCodesApi {
             ItemType.SERIES to seriesCats.map { it.categoryName }
         )
 
+        onStreamingBatch?.invoke(map, emptyList(), "Kategoriler hazır...")
+
         val previewItems = ArrayList<M3uItem>()
 
         // 2. Fetch bulk streams: ONE single request per type (total only 3 requests, avoiding 300+ category loops!)
         val liveStreams = getAllStreams(creds, ItemType.LIVE, liveCatsMap, context)
-        previewItems.addAll(liveStreams)
+        if (liveStreams.isNotEmpty()) {
+            previewItems.addAll(liveStreams)
+            onStreamingBatch?.invoke(map, previewItems.toList(), "${liveStreams.size} canlı yayın hazır...")
+        }
 
         kotlinx.coroutines.delay(150)
         val vodStreams = getAllStreams(creds, ItemType.MOVIE, vodCatsMap, context)
-        previewItems.addAll(vodStreams)
+        if (vodStreams.isNotEmpty()) {
+            previewItems.addAll(vodStreams)
+            onStreamingBatch?.invoke(map, previewItems.toList(), "${previewItems.size} yayın aktif...")
+        }
 
         kotlinx.coroutines.delay(150)
         val seriesStreams = getAllStreams(creds, ItemType.SERIES, seriesCatsMap, context)
-        previewItems.addAll(seriesStreams)
+        if (seriesStreams.isNotEmpty()) {
+            previewItems.addAll(seriesStreams)
+            onStreamingBatch?.invoke(map, previewItems.toList(), "${previewItems.size} yayın aktif...")
+        }
 
         // Fallback: If bulk endpoints returned empty (unsupported or restricted server),
         // fetch ONLY top 3 categories per type sequentially (max 9 requests total)
         if (previewItems.isEmpty()) {
             for (cat in liveCats.take(3)) {
-                previewItems.addAll(getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.LIVE, context))
+                val streams = getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.LIVE, context)
+                if (streams.isNotEmpty()) {
+                    previewItems.addAll(streams)
+                    onStreamingBatch?.invoke(map, previewItems.toList(), "${previewItems.size} yayın aktif...")
+                }
                 kotlinx.coroutines.delay(150)
             }
             for (cat in vodCats.take(3)) {
-                previewItems.addAll(getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.MOVIE, context))
+                val streams = getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.MOVIE, context)
+                if (streams.isNotEmpty()) {
+                    previewItems.addAll(streams)
+                    onStreamingBatch?.invoke(map, previewItems.toList(), "${previewItems.size} yayın aktif...")
+                }
                 kotlinx.coroutines.delay(150)
             }
             for (cat in seriesCats.take(3)) {
-                previewItems.addAll(getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.SERIES, context))
+                val streams = getStreamsForCategory(creds, cat.categoryId, cat.categoryName, ItemType.SERIES, context)
+                if (streams.isNotEmpty()) {
+                    previewItems.addAll(streams)
+                    onStreamingBatch?.invoke(map, previewItems.toList(), "${previewItems.size} yayın aktif...")
+                }
                 kotlinx.coroutines.delay(150)
             }
         }

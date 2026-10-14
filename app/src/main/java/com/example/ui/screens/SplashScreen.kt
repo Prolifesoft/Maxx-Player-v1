@@ -57,8 +57,11 @@ fun SplashScreen(
     var hasNavigated by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Stage 2: Preload last used or default playlist while splash intro plays
+    // Stage 2: Preload last used or default playlist while splash intro plays, and check for remote updates
     LaunchedEffect(Unit) {
+        try {
+            com.example.model.UpdateManager.checkForUpdates(context, manual = false)
+        } catch (_: Exception) {}
         try {
             val targetUrl = com.example.model.PlaylistRepository.resolveLastOrFirstPlaylistUrl(context)
             if (!targetUrl.isNullOrBlank()) {

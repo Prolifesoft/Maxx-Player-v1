@@ -122,6 +122,9 @@ fun PlayListsScreen(
     // Background periodic Odoo sync to keep package, device, and playlists in sync with web portal
     LaunchedEffect(effectiveUserId) {
         try {
+            com.example.model.UpdateManager.checkForUpdates(context, manual = false)
+        } catch (_: Exception) {}
+        try {
             if (!DeviceManager.isDeviceRegisteredOnPortal()) {
                 OdooIntegrationManager.sendDeviceToPortalAndSyncAll(
                     context = context,
@@ -145,7 +148,30 @@ fun PlayListsScreen(
         }
     }
 
+    val playlistRawExpireDates = remember { mutableStateMapOf<String, String>() }
     val playlistExpireDates = remember { mutableStateMapOf<String, String>() }
+    var expirationTicker by remember { mutableStateOf(0L) }
+
+    // Periyodik olarak (her 60 saniyede bir) kalan süre saat/dakika gösterimini canlı güncelle
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            expirationTicker = System.currentTimeMillis()
+        }
+    }
+
+    // Ticker değiştikçe veya ham tarihler değiştikçe formatlanan süreyi anlık yeniden hesapla
+    LaunchedEffect(expirationTicker, playlists) {
+        for (p in playlists) {
+            val raw = playlistRawExpireDates[p.hostUrl]
+                ?: com.example.model.XtreamCodesApi.playlistExpireDateCache["${p.hostUrl}:${p.username}"]
+                ?: OdooIntegrationManager.playlistExpireDateMap[p.hostUrl]
+                ?: OdooIntegrationManager.playlistExpireDateMap[p.name]
+            if (raw != null) {
+                playlistExpireDates[p.hostUrl] = com.example.model.XtreamCodesApi.formatDetailedExpiration(raw)
+            }
+        }
+    }
 
     LaunchedEffect(playlists) {
         withContext(Dispatchers.IO) {
@@ -161,6 +187,7 @@ fun PlayListsScreen(
                 if (cached != null) {
                     val formatted = com.example.model.XtreamCodesApi.formatDetailedExpiration(cached)
                     withContext(Dispatchers.Main) {
+                        playlistRawExpireDates[p.hostUrl] = cached
                         playlistExpireDates[p.hostUrl] = formatted
                     }
                 }

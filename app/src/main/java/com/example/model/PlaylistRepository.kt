@@ -278,10 +278,9 @@ object PlaylistRepository {
             val cacheFile = getCacheFile(context, cleanUrl)
 
             // Xtream Codes API Mode: player_api.php ile hızlı API entegrasyonu (buket sırasını korur)
-            val parsedCreds = com.example.parser.XtreamApiClient.parseXtreamUrl(cleanUrl)
-                ?: XtreamCodesApi.extractCredentials(cleanUrl, context)
+            val parsedCreds = XtreamCodesApi.extractCredentials(cleanUrl, context)
             if (parsedCreds != null) {
-                currentXtreamCredentials = XtreamCredentials(parsedCreds.baseUrl, parsedCreds.username, parsedCreds.password)
+                currentXtreamCredentials = parsedCreds
                 _loadStep.value = PlaylistLoadStep.PROCESSING
                 _loadingDetail.value = "Kategoriler ve buketler API ile alınıyor..."
                 _loadingProgress.value = 25
@@ -290,7 +289,23 @@ object PlaylistRepository {
                 try {
                     _loadStep.value = PlaylistLoadStep.DOWNLOADING
                     _loadingDetail.value = "Kategoriler ve yayınlar sunucudan alınıyor..."
-                    val previewResult = XtreamCodesApi.initializeCategoriesAndPreview(context, currentXtreamCredentials!!)
+                    val previewResult = XtreamCodesApi.initializeCategoriesAndPreview(
+                        context = context,
+                        creds = currentXtreamCredentials!!,
+                        onStreamingBatch = { cats, partialItems, detail ->
+                            if (cats.values.any { it.isNotEmpty() }) {
+                                _knownGroups.value = cats
+                                saveKnownGroupsCache(context, cleanUrl, cats)
+                            }
+                            if (partialItems.isNotEmpty()) {
+                                _playlist.value = partialItems
+                                currentLoadedUrl = cleanUrl
+                                saveXtreamToM3uCache(context, cleanUrl, partialItems)
+                            }
+                            _isDialogDismissed.value = true
+                            _loadingDetail.value = detail
+                        }
+                    )
                     val hasCats = previewResult.categoriesByType.values.any { it.isNotEmpty() }
                     val hasItems = previewResult.previewItems.isNotEmpty()
 
@@ -303,23 +318,29 @@ object PlaylistRepository {
                             saveXtreamToM3uCache(context, cleanUrl, previewResult.previewItems)
                         }
 
+                        val liveCount = previewResult.previewItems.count { it.type == com.example.parser.ItemType.LIVE }
+                        val movieCount = previewResult.previewItems.count { it.type == com.example.parser.ItemType.MOVIE }
+                        val seriesCount = previewResult.previewItems.count { it.type == com.example.parser.ItemType.SERIES }
+                        val catCount = previewResult.categoriesByType.values.sumOf { it.size }
+                        android.util.Log.d("PlaylistFetch", "method=API, url=$cleanUrl, live=$liveCount, movies=$movieCount, series=$seriesCount, categories=$catCount")
+
                         currentLoadedUrl = cleanUrl
                         _isDialogDismissed.value = true
                         _loadStep.value = PlaylistLoadStep.COMPLETED
                         _loadingProgress.value = 100
-                        val totalCats = previewResult.categoriesByType.values.sumOf { it.size }
-                        _loadingDetail.value = "$totalCats kategori ve ${previewResult.previewItems.size} yayın hazır"
+                        _loadingDetail.value = "$catCount kategori ve ${previewResult.previewItems.size} yayın hazır"
                         _isLoading.value = false
                         return@withLock
                     }
                 } catch (e: Throwable) {
+                    android.util.Log.e("PlaylistFetch", "method=API_ERROR, url=$cleanUrl, error=${e.message}", e)
                     e.printStackTrace()
                 }
 
                 // Xtream API boş döndüyse veya hata verdiyse M3U indirme akışına devam et
-            }
-
-                // Xtream API boş döndüyse veya hata verdiyse M3U indirme akışına devam et
+                android.util.Log.d("PlaylistFetch", "method=M3U_FALLBACK, url=$cleanUrl, reason=API_returned_empty_or_failed")
+            } else {
+                android.util.Log.d("PlaylistFetch", "method=M3U_FALLBACK, url=$cleanUrl, reason=No_Xtream_credentials_found")
             }
 
             // M3U / HLS / Standart Akış İndirme Modu
